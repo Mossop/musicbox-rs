@@ -1,0 +1,10 @@
+[package]
+name = "musicbox"
+version = "0.1.0"
+authors = ["Dave Townsend <dtownsend@oxymoronical.com>"]
+edition = "2018"
+
+[dependencies]
+rppal = "^0.11.3"
+futures-preview = "=0.3.0-alpha.18"
+rpi-futures = { path = "../rpi-futures" }
