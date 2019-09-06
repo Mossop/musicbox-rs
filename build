@@ -1,0 +1,4 @@
+#! /bin/sh
+
+cross build --target arm-unknown-linux-gnueabi
+scp target/arm-unknown-linux-gnueabi/debug/musicbox musicbox:
