@@ -10,6 +10,8 @@ use log::trace;
 use rppal::gpio::{InputPin, Level, Result, Trigger};
 use tokio_timer::{delay, Delay};
 
+const BUTTON_DEBOUNCE: u64 = 50;
+
 /// An event reported from an input pin.
 ///
 /// Reports the instant it occured and the pin's level at that instant.
@@ -151,7 +153,7 @@ impl Stream for DebouncedPinEventStream {
 
 /// A stream of debounced pin level changes.
 ///
-/// Retrieve this by calling [`changes()()`](trait.InputPinEvents.html#method.changes)
+/// Retrieve this by calling [`changes()`](trait.InputPinEvents.html#method.changes)
 /// on an [`rppal`](https://docs.golemparts.com/rppal) `InputPin`.
 ///
 /// Takes a pin, debounces its level change events and only returns actual
@@ -189,6 +191,124 @@ impl Stream for PinChangeStream {
     }
 }
 
+/// An event from a button.
+#[derive(Debug)]
+pub enum ButtonEvent {
+    /// The button was pushed.
+    Press(Instant),
+    /// The button was released.
+    Release(Instant),
+    /// The push was interpreted as a click.
+    Click(Instant),
+    /// The push was interpreted as a hold.
+    Hold(Instant),
+}
+
+/// A stream of debounced [`ButtonEvent`](enum.ButtonEvent.html)s.
+///
+/// Retrieve this by calling [`button_events()`](trait.InputPinEvents.html#method.button_events)
+/// on an [`rppal`](https://docs.golemparts.com/rppal) `InputPin`.
+///
+/// Pressing and releasing a button will return [`Press`](enum.ButtonEvent.html#variant.Press)
+/// and [`Release`](enum.ButtonEvent.html#variant.Release) events. Either a
+/// [`Click`](enum.ButtonEvent.html#variant.Click) or [`Hold`](enum.ButtonEvent.html#variant.Hold)
+/// event is returned in between:
+///
+/// If no hold timeout was given then a [`Click`](enum.ButtonEvent.html#variant.Click)
+/// event is returned immediately after the [`Press`](enum.ButtonEvent.html#variant.Press)
+/// event (it will have the same instant).
+///
+/// If a hold timeout is given and the button is pressed for less than the
+/// timeout then a [`Click`](enum.ButtonEvent.html#variant.Click) event is
+/// returned immediately before the [`Release`](enum.ButtonEvent.html#variant.Release)
+/// event (it will have the same instant).
+///
+/// If a hold timeout is given and the button is pressed for longer than the
+/// timeout then a [`Hold`](enum.ButtonEvent.html#variant.Hold) event is
+/// returned after the timeout expires (with an instant that is the timeout
+/// duration after the button press) and then whenever the button is released
+/// later the [`Press`](enum.ButtonEvent.html#variant.Press) event is returned.
+pub struct ButtonEventStream {
+    hold_timeout: Option<Duration>,
+    events: Pin<Box<PinChangeStream>>,
+    timer: Option<Pin<Box<Delay>>>,
+    pressed_level: Level,
+    pending: Option<ButtonEvent>,
+}
+
+impl ButtonEventStream {
+    fn new(
+        pin: &mut InputPin,
+        pressed_level: Level,
+        hold_timeout: Option<Duration>,
+    ) -> Result<ButtonEventStream> {
+        Ok(ButtonEventStream {
+            hold_timeout,
+            events: Box::pin(pin.changes(Duration::from_millis(BUTTON_DEBOUNCE))?),
+            pressed_level,
+            timer: None,
+            pending: None,
+        })
+    }
+}
+
+impl Stream for ButtonEventStream {
+    type Item = Result<ButtonEvent>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Result<ButtonEvent>>> {
+        // If there was a release event pending from last time send it now.
+        if let Some(event) = self.pending.take() {
+            return Poll::Ready(Some(Ok(event)));
+        }
+
+        match self.events.as_mut().poll_next(cx) {
+            Poll::Ready(Some(Ok(event))) => {
+                if event.level == self.pressed_level {
+                    // Button was pressed.
+                    match self.hold_timeout {
+                        Some(timeout) => {
+                            // Need to wait until timeout has passed to
+                            // determine whether this is a click or a hold.
+                            self.timer = Some(Box::pin(delay(event.instant + timeout)));
+                        }
+                        None => {
+                            // Definitely a click, return the event the next
+                            // time around.
+                            self.pending = Some(ButtonEvent::Click(event.instant));
+                        }
+                    }
+                    Poll::Ready(Some(Ok(ButtonEvent::Press(event.instant))))
+                } else if self.timer.take().is_some() {
+                    // Released before the click timeout, this was a click.
+                    // Need to send the click event then queue a release
+                    // event.
+                    self.pending = Some(ButtonEvent::Release(event.instant));
+                    Poll::Ready(Some(Ok(ButtonEvent::Click(event.instant))))
+                } else {
+                    // Already sent a hold event (or this is an initial
+                    // transition), just send the release event now.
+                    Poll::Ready(Some(Ok(ButtonEvent::Release(event.instant))))
+                }
+            }
+            Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(e))),
+            Poll::Ready(None) => Poll::Ready(None),
+            Poll::Pending => {
+                if let Some(mut timer) = self.timer.take() {
+                    if let Poll::Ready(_) = timer.as_mut().poll(cx) {
+                        // We've hit the hold threshold. Call this a hold.
+                        Poll::Ready(Some(Ok(ButtonEvent::Hold(Instant::now()))))
+                    } else {
+                        self.timer = Some(timer);
+                        Poll::Pending
+                    }
+                } else {
+                    Poll::Pending
+                }
+            }
+        }
+    }
+}
+
 /// Extends [`rppal`](https://docs.golemparts.com/rppal)'s `InputPin` with
 /// functions to return various streams.
 pub trait InputPinEvents {
@@ -204,7 +324,7 @@ pub trait InputPinEvents {
     /// Returns a debounced stream of level change events.
     ///
     /// Similar to [`events()`](#method.events) but drops any level changes that
-    /// occur within the given timeout.
+    /// occur within the given `timeout`.
     ///
     /// Requesting any other mechanism of interrupt from this pin will cause
     /// this stream to stop returning events.
@@ -218,7 +338,26 @@ pub trait InputPinEvents {
     ///
     /// Guaranteed to only return level changes. Changes are debounced by
     /// `timeout`.
+    ///
+    /// Requesting any other mechanism of interrupt from this pin will cause
+    /// this stream to stop returning events.
     fn changes(&mut self, timeout: Duration) -> Result<PinChangeStream>;
+
+    /// Returns a stream of button events.
+    ///
+    /// Provides what you likely want for most inputs. Debounced button events
+    /// including click/hold differentiation.
+    ///
+    /// If a button has been pressed for `hold_timeout` (if passed) then the
+    /// press will be considered to be a hold instead of a click.
+    ///
+    /// Requesting any other mechanism of interrupt from this pin will cause
+    /// this stream to stop returning events.
+    fn button_events(
+        &mut self,
+        pressed_level: Level,
+        hold_timeout: Option<Duration>,
+    ) -> Result<ButtonEventStream>;
 }
 
 impl InputPinEvents for InputPin {
@@ -236,5 +375,13 @@ impl InputPinEvents for InputPin {
 
     fn changes(&mut self, timeout: Duration) -> Result<PinChangeStream> {
         PinChangeStream::new(self, timeout)
+    }
+
+    fn button_events(
+        &mut self,
+        pressed_level: Level,
+        hold_timeout: Option<Duration>,
+    ) -> Result<ButtonEventStream> {
+        ButtonEventStream::new(self, pressed_level, hold_timeout)
     }
 }

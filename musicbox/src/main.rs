@@ -2,14 +2,14 @@ use std::time::Duration;
 
 use futures::stream::StreamExt;
 use rpi_futures::gpio::InputPinEvents;
-use rppal::gpio::{Gpio, Result};
+use rppal::gpio::{Gpio, Level, Result};
 use tokio::runtime::Runtime;
 
 async fn run() -> Result<()> {
     let gpio = Gpio::new()?;
     let pin = gpio.get(4)?;
     let mut input = pin.into_input_pullup();
-    let mut stream = input.changes(Duration::from_millis(50))?;
+    let mut stream = input.button_events(Level::Low, None)?;
 
     loop {
         let event = match stream.next().await {
@@ -18,7 +18,7 @@ async fn run() -> Result<()> {
             None => return Ok(()),
         };
 
-        println!("{:?} {}", event.instant, event.level);
+        println!("{:?}", event);
     }
 }
 
