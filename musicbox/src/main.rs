@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use futures::stream::StreamExt;
 use rpi_futures::gpio::InputPinEvents;
 use rppal::gpio::{Gpio, Level, Result};

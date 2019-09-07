@@ -10,3 +10,6 @@ futures-preview = "=0.3.0-alpha.18"
 rpi-futures = { path = "../rpi-futures" }
 env_logger = "^0.6.2"
 tokio = "=0.2.0-alpha.4"
+mp3-metadata = "^0.3.2"
+hyper = "=0.13.0-alpha.1"
+rodio = "^0.9.0"
