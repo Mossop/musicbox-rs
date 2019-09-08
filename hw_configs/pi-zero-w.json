@@ -1,0 +1,87 @@
+{
+  "events": [{
+    "event": "PreviousTrack",
+    "button": {
+      "pin": 27,
+      "kind": "PullUp",
+      "on": "Low"
+    }
+  }, {
+    "event": "NextTrack",
+    "button": {
+      "pin": 23,
+      "kind": "PullUp",
+      "on": "Low"
+    }
+  }, {
+    "event": "PlayPause",
+    "button": {
+      "pin": 22,
+      "kind": "PullUp",
+      "on": "Low"
+    }
+  }, {
+    "event": "VolumeUp",
+    "button": {
+      "pin": 4,
+      "kind": "PullUp",
+      "on": "Low"
+    }
+  }, {
+    "event": "VolumeDown",
+    "button": {
+      "pin": 17,
+      "kind": "PullUp",
+      "on": "Low"
+    }
+  }],
+  "playlists": [{
+    "name": "red",
+    "defaultTitle": "Red Playlist",
+    "start": {
+      "pin": 24,
+      "kind": "PullUp",
+      "on": "Low"
+    },
+    "display": {
+      "pin": 25,
+      "on": "High"
+    }
+  }, {
+    "name": "green",
+    "defaultTitle": "Green Playlist",
+    "start": {
+      "pin": 5,
+      "kind": "PullUp",
+      "on": "Low"
+    },
+    "display": {
+      "pin": 6,
+      "on": "High"
+    }
+  }, {
+    "name": "yellow",
+    "defaultTitle": "Yellow Playlist",
+    "start": {
+      "pin": 12,
+      "kind": "PullUp",
+      "on": "Low"
+    },
+    "display": {
+      "pin": 13,
+      "on": "High"
+    }
+  }, {
+    "name": "blue",
+    "defaultTitle": "Blue Playlist",
+    "start": {
+      "pin": 16,
+      "kind": "PullUp",
+      "on": "Low"
+    },
+    "display": {
+      "pin": 20,
+      "on": "High"
+    }
+  }]
+}

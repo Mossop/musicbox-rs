@@ -1,0 +1,11 @@
+about: Musicbox.
+args:
+    - data:
+        long: data-dir
+        value_name: DIRECTORY
+        help: Sets a custom directory to use as the data directory.
+        takes_value: true
+    - daemonize:
+        short: d
+        long: daemonize
+        help: Run as a daemon.

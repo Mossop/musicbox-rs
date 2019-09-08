@@ -1,28 +1,61 @@
-use futures::stream::StreamExt;
-use rpi_futures::gpio::InputPinEvents;
-use rppal::gpio::{Gpio, Level, Result};
-use tokio::runtime::Runtime;
+use std::env::current_dir;
+use std::path::PathBuf;
+use std::process::exit;
 
-async fn run() -> Result<()> {
-    let gpio = Gpio::new()?;
-    let pin = gpio.get(4)?;
-    let mut input = pin.into_input_pullup();
-    let mut stream = input.button_events(Level::Low, None)?;
+use clap::{load_yaml, App};
 
-    loop {
-        let event = match stream.next().await {
-            Some(Ok(e)) => e,
-            Some(Err(e)) => return Err(e),
-            None => return Ok(()),
-        };
-
-        println!("{:?}", event);
-    }
-}
+use musicbox::MusicBox;
 
 fn main() {
     env_logger::init();
 
-    let runtime = Runtime::new().expect("Failed to create async runtime.");
-    runtime.block_on(run()).expect("Should not have failed.");
+    let yaml = load_yaml!("cli.yml");
+    let matches = App::from_yaml(yaml).get_matches();
+
+    let data_dir: PathBuf = match matches.value_of("data") {
+        Some(path) => {
+            let dir: PathBuf = match path.parse() {
+                Ok(p) => p,
+                Err(e) => {
+                    println!("'{}' is an invalid path: {}", path, e);
+                    exit(1);
+                }
+            };
+
+            if dir.is_absolute() {
+                dir
+            } else {
+                let mut current = match current_dir() {
+                    Ok(d) => d,
+                    Err(e) => {
+                        println!("Current working directory is invalid: {}", e);
+                        exit(1);
+                    }
+                };
+                current.push(dir);
+                current
+            }
+        }
+        None => {
+            let current = match current_dir() {
+                Ok(d) => d,
+                Err(e) => {
+                    println!("Current working directory is invalid: {}", e);
+                    exit(1);
+                }
+            };
+            current.to_owned()
+        }
+    };
+
+    let result = if matches.is_present("daemonize") {
+        MusicBox::daemonize(&data_dir)
+    } else {
+        MusicBox::block(&data_dir)
+    };
+
+    if let Err(e) = result {
+        println!("{}", e);
+        exit(1);
+    }
 }
