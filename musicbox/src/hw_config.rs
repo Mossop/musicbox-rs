@@ -1,7 +1,7 @@
 use rppal::gpio::{Level, PullUpDown};
 use serde::{Deserialize, Serialize};
 
-use crate::events::Event;
+use crate::events::InputEvent;
 
 #[derive(Serialize, Deserialize)]
 #[serde(remote = "PullUpDown")]
@@ -51,13 +51,13 @@ pub struct PlaylistConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InputConfig {
-    pub event: Event,
+    pub action: InputEvent,
     pub button: ButtonConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HwConfig {
-    pub events: Vec<InputConfig>,
+    pub inputs: Vec<InputConfig>,
     pub playlists: Vec<PlaylistConfig>,
 }

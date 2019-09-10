@@ -2,6 +2,7 @@ mod events;
 mod hardware;
 mod hw_config;
 mod musicbox;
+mod player;
 mod playlist;
 
 use std::fmt::Display;

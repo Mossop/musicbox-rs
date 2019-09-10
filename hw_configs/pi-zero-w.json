@@ -1,34 +1,34 @@
 {
-  "events": [{
-    "event": "PreviousTrack",
+  "inputs": [{
+    "action": "PreviousTrack",
     "button": {
       "pin": 27,
       "kind": "PullUp",
       "on": "Low"
     }
   }, {
-    "event": "NextTrack",
+    "action": "NextTrack",
     "button": {
       "pin": 23,
       "kind": "PullUp",
       "on": "Low"
     }
   }, {
-    "event": "PlayPause",
+    "action": "PlayPause",
     "button": {
       "pin": 22,
       "kind": "PullUp",
       "on": "Low"
     }
   }, {
-    "event": "VolumeUp",
+    "action": "VolumeUp",
     "button": {
       "pin": 4,
       "kind": "PullUp",
       "on": "Low"
     }
   }, {
-    "event": "VolumeDown",
+    "action": "VolumeDown",
     "button": {
       "pin": 17,
       "kind": "PullUp",

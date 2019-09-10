@@ -6,7 +6,7 @@ use log::{debug, error};
 use rpi_futures::gpio::{ButtonEvent, InputPinEvents};
 use rppal::gpio::{Gpio, Level, OutputPin, PullUpDown};
 
-use crate::events::Event;
+use crate::events::{Event, InputEvent};
 use crate::hw_config::{ButtonConfig, OutputConfig};
 
 const BUTTON_HOLD_TIMEOUT: Duration = Duration::from_secs(1);
@@ -57,8 +57,8 @@ impl Drop for LED {
 pub fn event_stream(
     gpio: &Gpio,
     config: &ButtonConfig,
-    click_event: Event,
-    hold_event: Option<Event>,
+    click_event: InputEvent,
+    hold_event: Option<InputEvent>,
 ) -> Result<impl Stream<Item = Event>, String> {
     debug!("Creating event button for pin {}, type {}, on level: {}, click event {:?}, hold event {:?}", config.pin, config.kind, config.on, click_event, hold_event);
     let pin = match gpio.get(config.pin) {
@@ -86,8 +86,8 @@ pub fn event_stream(
 
     Ok(events.filter_map(move |r| {
         ready(match r {
-            Ok(ButtonEvent::Click(_)) => Some(click_event.clone()),
-            Ok(ButtonEvent::Hold(_)) => hold_event.clone(),
+            Ok(ButtonEvent::Click(_)) => Some(Event::Input(click_event.clone())),
+            Ok(ButtonEvent::Hold(_)) => hold_event.clone().map(|e| Event::Input(e)),
             Err(e) => Some(Event::Error(e.to_string())),
             _ => None,
         })

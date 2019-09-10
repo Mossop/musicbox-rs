@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
-use std::pin::Pin;
 
 use daemonize::{Daemonize, DaemonizeError};
 use futures::compat::*;
@@ -13,9 +12,10 @@ use serde_json::from_reader;
 use signal_hook::iterator::Signals;
 use tokio::runtime::Runtime;
 
-use crate::events::{Event, EventStream};
+use crate::events::{Event, EventListener, EventLoop, InputEvent};
 use crate::hardware::event_stream;
 use crate::hw_config::HwConfig;
+use crate::player::Player;
 use crate::playlist::Playlist;
 use crate::ResultErrorLogger;
 
@@ -25,14 +25,13 @@ pub struct MusicBox {
     data_dir: PathBuf,
     playlists: HashMap<String, Playlist>,
     gpio: Gpio,
-
-    events: Pin<Box<EventStream>>,
+    player: Player,
 }
 
 impl MusicBox {
     // Should perform any privileged actions before the daemon reduces
     // privileges.
-    async fn init(data_dir: &Path) -> Result<MusicBox, String> {
+    async fn init(data_dir: &Path) -> Result<EventLoop, String> {
         let mut hw_config_file = data_dir.to_owned();
         hw_config_file.push(HW_CONFIG_NAME.parse::<PathBuf>().unwrap());
 
@@ -49,27 +48,31 @@ impl MusicBox {
 
         let gpio = Gpio::new().map_err(|e| e.to_string())?;
 
-        let mut events = EventStream::new();
+        let mut event_loop = EventLoop::new();
         let mut map = HashMap::with_capacity(hw_config.playlists.len());
         for config in hw_config.playlists {
-            let playlist = match Playlist::new(data_dir, &gpio, &config, &mut events).await {
+            let playlist = match Playlist::new(data_dir, &gpio, &config, &mut event_loop).await {
                 Ok(p) => p,
                 Err(_) => continue,
             };
             map.insert(playlist.name(), playlist);
         }
 
-        for event in hw_config.events {
-            match event_stream(&gpio, &event.button, event.event.clone(), None) {
-                Ok(s) => events.add_event_stream(s),
+        for event in hw_config.inputs {
+            match event_stream(&gpio, &event.button, event.action.clone(), None) {
+                Ok(s) => event_loop.add_event_stream(s),
                 Err(e) => {
-                    error!("Failed to initialize event {:?} button: {}", event.event, e);
+                    error!(
+                        "Failed to initialize event {:?} button: {}",
+                        event.action, e
+                    );
                     continue;
                 }
             }
         }
 
         match Signals::new(&[
+            signal_hook::SIGHUP,
             signal_hook::SIGTERM,
             signal_hook::SIGINT,
             signal_hook::SIGQUIT,
@@ -77,8 +80,9 @@ impl MusicBox {
         .and_then(|s| s.into_async())
         {
             Ok(signals) => {
-                events.add_event_stream(signals.compat().map(|r| match r {
-                    Ok(_) => Event::Shutdown,
+                event_loop.add_event_stream(signals.compat().map(|r| match r {
+                    Ok(signal_hook::SIGHUP) => Event::Input(InputEvent::Reload),
+                    Ok(_) => Event::Input(InputEvent::Shutdown),
                     Err(e) => Event::Error(e.to_string()),
                 }));
             }
@@ -87,44 +91,24 @@ impl MusicBox {
             }
         }
 
-        Ok(MusicBox {
+        let music_box = MusicBox {
+            player: Player::new(&mut event_loop),
             gpio,
             data_dir: data_dir.to_owned(),
             playlists: map,
-            events: Box::pin(events),
-        })
-    }
+        };
 
-    async fn run_loop(&mut self) -> Result<(), String> {
-        info!("Music box startup.");
+        event_loop.add_listener(music_box);
 
-        while let Some(event) = self.events.next().await {
-            info!("Saw event {:?}", event);
-
-            match event {
-                Event::Shutdown => {
-                    break;
-                }
-                Event::Error(s) => {
-                    error!("{}", s);
-                }
-                _ => (),
-            }
-        }
-
-        info!("Music box clean shutdown.");
-        Ok(())
+        Ok(event_loop)
     }
 
     async fn run(data_dir: &Path) -> Result<(), String> {
         info!("Music box initialization.");
-        let mut music_box = MusicBox::init(data_dir)
+        let mut event_loop = MusicBox::init(data_dir)
             .await
             .log_error(|e| format!("Music box initialization failed: {}", e))?;
-        music_box
-            .run_loop()
-            .await
-            .log_error(|e| format!("Music box unclean shutdown: {}", e))
+        Ok(event_loop.run().await)
     }
 
     pub fn block(data_dir: &Path) -> Result<(), String> {
@@ -160,10 +144,10 @@ impl MusicBox {
             })
             .start();
 
-        let mut music_box = match result {
-            Ok(musicbox) => {
+        let mut event_loop = match result {
+            Ok(event_loop) => {
                 // In the forked process.
-                musicbox
+                event_loop
             }
             Err(DaemonizeError::Fork) => {
                 // Failed to fork at all.
@@ -178,8 +162,25 @@ impl MusicBox {
         };
 
         let runtime = Runtime::new().unwrap();
-        runtime
-            .block_on(music_box.run_loop())
-            .log_error(|e| format!("Music box unclean shutdown: {}", e))
+        Ok(runtime.block_on(event_loop.run()))
+    }
+}
+
+impl EventListener for MusicBox {
+    fn event(&mut self, event: &Event) {
+        info!("Saw event {:?}", event);
+
+        match event {
+            Event::Startup => {
+                info!("Music box startup.");
+            }
+            Event::Shutdown => {
+                info!("Music box clean shutdown.");
+            }
+            Event::Error(s) => {
+                error!("{}", s);
+            }
+            _ => (),
+        }
     }
 }
