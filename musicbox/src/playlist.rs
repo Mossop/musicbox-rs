@@ -1,19 +1,25 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
-use log::{debug, error};
+use futures::stream::StreamExt;
+use log::{debug, error, info};
 use rppal::gpio::Gpio;
-use tokio::fs::{create_dir_all, metadata};
+use serde::Serialize;
+use tokio::fs::{create_dir_all, metadata, read_dir};
 
-use crate::events::{EventLoop, InputEvent};
+use crate::events::{Event, EventStream};
 use crate::hardware::{event_stream, LED};
 use crate::hw_config::PlaylistConfig;
+use crate::player::Track;
 use crate::ResultErrorLogger;
 
+#[derive(Serialize)]
 pub struct Playlist {
     root: PathBuf,
-    led: LED,
     name: String,
+    tracks: Vec<Track>,
+    #[serde(skip)]
+    led: LED,
 }
 
 impl Playlist {
@@ -21,7 +27,7 @@ impl Playlist {
         data_dir: &Path,
         gpio: &Gpio,
         config: &PlaylistConfig,
-        events: &mut EventLoop,
+        events: &EventStream,
     ) -> Result<Playlist, String> {
         let mut root = data_dir.to_owned();
         root.push("playlists".parse::<PathBuf>().map_err(|e| e.to_string())?);
@@ -54,27 +60,78 @@ impl Playlist {
             }
         }
 
-        let mut led = LED::new(gpio, &config.display).map_err(|e| e.to_string())?;
+        let mut playlist = Playlist {
+            root,
+            led: LED::new(gpio, &config.display).map_err(|e| e.to_string())?,
+            name: config.name.clone(),
+            tracks: Default::default(),
+        };
+        playlist.rescan().await?;
+
         let button = event_stream(
             gpio,
             &config.start,
-            InputEvent::StartPlaylist(config.name.clone()),
-            Some(InputEvent::RestartPlaylist(config.name.clone())),
+            Event::StartPlaylist(config.name.clone(), false),
+            Some(Event::StartPlaylist(config.name.clone(), true)),
         )
         .map_err(|e| e.to_string())
         .log_error(|e| format!("Failed to create playlist {} button: {}", config.name, e))?;
 
         events.add_event_stream(button);
-        led.on();
 
-        Ok(Playlist {
-            root,
-            led,
-            name: config.name.clone(),
-        })
+        Ok(playlist)
+    }
+
+    pub async fn rescan(&mut self) -> Result<(), String> {
+        self.tracks = read_dir(self.root.clone())
+            .await
+            .map_err(|e| e.to_string())?
+            .filter_map(|r| {
+                async {
+                    let entry = match r {
+                        Ok(r) => r,
+                        _ => return None,
+                    };
+
+                    let metadata = match entry.metadata().await {
+                        Ok(m) => m,
+                        _ => return None,
+                    };
+
+                    if !metadata.is_file() {
+                        return None;
+                    }
+
+                    if let Some(extension) = entry.path().extension() {
+                        if extension == "mp3" {
+                            Some(Track::new(&entry.path()))
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                }
+            })
+            .collect::<Vec<Track>>()
+            .await;
+
+        if self.tracks.is_empty() {
+            info!("{} playlist has no tracks.", self.name);
+            self.led.off();
+        } else {
+            info!("{} playlist has {} tracks.", self.name, self.tracks.len());
+            self.led.on();
+        }
+
+        Ok(())
     }
 
     pub fn name(&self) -> String {
         self.name.clone()
+    }
+
+    pub fn tracks(&self) -> Vec<Track> {
+        self.tracks.clone()
     }
 }

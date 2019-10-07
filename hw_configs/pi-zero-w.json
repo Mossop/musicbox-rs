@@ -37,7 +37,7 @@
   }],
   "playlists": [{
     "name": "red",
-    "defaultTitle": "Red Playlist",
+    "title": "Red Playlist",
     "start": {
       "pin": 24,
       "kind": "PullUp",
@@ -49,7 +49,7 @@
     }
   }, {
     "name": "green",
-    "defaultTitle": "Green Playlist",
+    "title": "Green Playlist",
     "start": {
       "pin": 5,
       "kind": "PullUp",
@@ -61,7 +61,7 @@
     }
   }, {
     "name": "yellow",
-    "defaultTitle": "Yellow Playlist",
+    "title": "Yellow Playlist",
     "start": {
       "pin": 12,
       "kind": "PullUp",
@@ -73,7 +73,7 @@
     }
   }, {
     "name": "blue",
-    "defaultTitle": "Blue Playlist",
+    "title": "Blue Playlist",
     "start": {
       "pin": 16,
       "kind": "PullUp",

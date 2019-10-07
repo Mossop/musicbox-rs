@@ -1,3 +1,4 @@
+name: musicbox
 about: Musicbox.
 args:
     - data:

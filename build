@@ -1,5 +1,5 @@
 #! /bin/sh
 
-cargo build && \
-rsync target/arm-unknown-linux-gnueabi/debug/musicbox musicbox: && \
+cargo build --release && \
+rsync target/arm-unknown-linux-gnueabi/release/musicbox musicbox: && \
 scp hw_configs/pi-zero-w.json musicbox:data/hwconfig.json
