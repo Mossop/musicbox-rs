@@ -6,6 +6,6 @@ edition = "2018"
 
 [dependencies]
 rppal = "^0.11.3"
-futures-preview = "=0.3.0-alpha.19"
+futures = "^0.3.4"
 log = "^0.4.8"
-tokio-timer = "=0.3.0-alpha.6"
+tokio = { version = "^0.2.11", features = ["time"] }

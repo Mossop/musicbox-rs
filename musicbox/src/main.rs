@@ -36,16 +36,13 @@ fn main() {
                 current
             }
         }
-        None => {
-            let current = match current_dir() {
-                Ok(d) => d,
-                Err(e) => {
-                    println!("Current working directory is invalid: {}", e);
-                    exit(1);
-                }
-            };
-            current.to_owned()
-        }
+        None => match current_dir() {
+            Ok(d) => d,
+            Err(e) => {
+                println!("Current working directory is invalid: {}", e);
+                exit(1);
+            }
+        },
     };
 
     let result = if matches.is_present("daemonize") {

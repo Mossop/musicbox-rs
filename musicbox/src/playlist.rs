@@ -62,7 +62,7 @@ impl Playlist {
 
         let mut playlist = Playlist {
             root,
-            led: LED::new(gpio, &config.display).map_err(|e| e.to_string())?,
+            led: LED::new(gpio, &config.display)?,
             name: config.name.clone(),
             tracks: Default::default(),
         };
@@ -74,7 +74,6 @@ impl Playlist {
             Event::StartPlaylist(config.name.clone(), false),
             Some(Event::StartPlaylist(config.name.clone(), true)),
         )
-        .map_err(|e| e.to_string())
         .log_error(|e| format!("Failed to create playlist {} button: {}", config.name, e))?;
 
         events.add_event_stream(button);
@@ -86,31 +85,29 @@ impl Playlist {
         self.tracks = read_dir(self.root.clone())
             .await
             .map_err(|e| e.to_string())?
-            .filter_map(|r| {
-                async {
-                    let entry = match r {
-                        Ok(r) => r,
-                        _ => return None,
-                    };
+            .filter_map(|r| async {
+                let entry = match r {
+                    Ok(r) => r,
+                    _ => return None,
+                };
 
-                    let metadata = match entry.metadata().await {
-                        Ok(m) => m,
-                        _ => return None,
-                    };
+                let metadata = match entry.metadata().await {
+                    Ok(m) => m,
+                    _ => return None,
+                };
 
-                    if !metadata.is_file() {
-                        return None;
-                    }
+                if !metadata.is_file() {
+                    return None;
+                }
 
-                    if let Some(extension) = entry.path().extension() {
-                        if extension == "mp3" {
-                            Some(Track::new(&entry.path()))
-                        } else {
-                            None
-                        }
+                if let Some(extension) = entry.path().extension() {
+                    if extension == "mp3" {
+                        Some(Track::new(&entry.path()))
                     } else {
                         None
                     }
+                } else {
+                    None
                 }
             })
             .collect::<Vec<Track>>()

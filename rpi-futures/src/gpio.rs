@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use futures::stream::Stream;
 use log::{debug, error, trace};
 use rppal::gpio::{InputPin, Level, Result, Trigger};
-use tokio_timer::{delay, Delay};
+use tokio::time::{delay_for, Delay};
 
 const BUTTON_DEBOUNCE: u64 = 50;
 
@@ -169,7 +169,7 @@ mod debounced_stream {
         fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Result<PinEvent>>> {
             match self.event_stream.as_mut().poll_next(cx) {
                 Poll::Ready(Some(Ok(event))) => {
-                    self.pending = Some((Box::pin(delay(event.instant + self.timeout)), event));
+                    self.pending = Some((Box::pin(delay_for(self.timeout)), event));
                     self.poll_next(cx)
                 }
                 Poll::Ready(None) => match self.pending.take() {
@@ -325,7 +325,7 @@ mod button_events {
                             Some(timeout) => {
                                 // Need to wait until timeout has passed to
                                 // determine whether this is a click or a hold.
-                                self.timer = Some(Box::pin(delay(event.instant + timeout)));
+                                self.timer = Some(Box::pin(delay_for(timeout)));
                             }
                             None => {
                                 // Definitely a click, return the event the next

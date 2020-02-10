@@ -9,10 +9,10 @@ name = "musicbox"
 
 [dependencies]
 rppal = "^0.11.3"
-futures-preview = { version = "=0.3.0-alpha.19", features = ["compat"] }
+futures = { version = "^0.3.4", features = ["compat"] }
 rpi-futures = { path = "../rpi-futures" }
 env_logger = "^0.6.2"
-tokio = "=0.2.0-alpha.6"
+tokio = { version = "^0.2.11", features = ["fs", "stream"] }
 mp3-metadata = "^0.3.2"
 rodio = "^0.9.0"
 serde = { version = "^1.0.100", features = ["derive"] }
@@ -20,6 +20,6 @@ serde_json = "^1.0.40"
 clap = { version = "^2.33.0", features = ["yaml"] }
 daemonize = "^0.4.1"
 log = "^0.4.8"
-signal-hook = { version = "^0.1.10", features = ["tokio-support"] }
+signal-hook = { version = "^0.1.13", features = ["tokio-support"] }
 cpal = "^0.8.2"
 minimp3 = "0.3.3"

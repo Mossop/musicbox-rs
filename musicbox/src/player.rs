@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use cpal::{DefaultFormatError, Format, Sample};
-use log::{debug, error, info, trace};
+use log::{debug, error, info};
 use rodio::decoder::Decoder;
 use rodio::source::Source;
 use rodio::{default_output_device, play_raw};

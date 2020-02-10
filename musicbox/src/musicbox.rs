@@ -166,18 +166,9 @@ impl MusicBox {
     }
 
     pub fn block(data_dir: &Path) -> Result<(), String> {
-        let runtime = Runtime::new().map_err(|e| e.to_string())?;
+        let mut runtime = Runtime::new().map_err(|e| e.to_string())?;
 
-        match runtime.block_on(MusicBox::init_and_run(data_dir)) {
-            Ok(()) => {
-                runtime.shutdown_on_idle();
-                Ok(())
-            }
-            Err(e) => {
-                runtime.shutdown_now();
-                Err(e)
-            }
-        }
+        runtime.block_on(MusicBox::init_and_run(data_dir))
     }
 
     pub fn daemonize(data_dir: &Path) -> Result<(), String> {
@@ -189,7 +180,7 @@ impl MusicBox {
         let result = Daemonize::new()
             .privileged_action(move || {
                 // This runs in the forked process.
-                let runtime = Runtime::new().unwrap();
+                let mut runtime = Runtime::new().unwrap();
                 info!("Music box initialization.");
                 runtime
                     .block_on(MusicBox::init(&path))
@@ -215,7 +206,7 @@ impl MusicBox {
             }
         };
 
-        let runtime = Runtime::new().unwrap();
-        runtime.block_on(music_box.run()).map_err(|e| e.to_string())
+        let mut runtime = Runtime::new().unwrap();
+        runtime.block_on(music_box.run())
     }
 }
