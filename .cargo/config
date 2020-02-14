@@ -6,5 +6,5 @@ linker = "/Volumes/toolchains/arm-linux-gnueabi/bin/arm-linux-gnueabi-gcc"
 ar = "/Volumes/toolchains/arm-linux-gnueabi/bin/arm-linux-gnueabi-ar"
 
 [target.arm-unknown-linux-gnueabi.alsa]
-rustc-link-search = ["/Volumes/toolchains/arm-linux-gnueabi/arm-linux-gnueabi/sysroot/usr/lib/arm-linux-gnueabihf"]
+rustc-link-search = ["/Volumes/toolchains/sysroots/arm-linux-gnueabi/usr/lib/arm-linux-gnueabihf"]
 rustc-link-lib = ["asound"]

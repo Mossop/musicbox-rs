@@ -1,0 +1,16 @@
+#! /bin/sh
+
+#! /bin/sh
+
+if [ "$1" == "" ]; then
+  echo "Must pass the target."
+  exit 1
+fi
+
+if [ ! -d "$1" ]; then
+  echo "$1 is an unknown target."
+fi
+
+cd $1
+ct-ng menuconfig
+

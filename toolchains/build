@@ -1,0 +1,28 @@
+#! /bin/sh
+
+export TARGET=$1
+
+if [ "$TARGET" == "" ]; then
+  echo "Must pass the target."
+  exit 1
+fi
+
+if [ ! -d "$TARGET" ]; then
+  echo "$TARGET is an unknown target."
+  exit 1
+fi
+
+mkdir -p /Volumes/sources/$TARGET/src
+cp $TARGET/.config /Volumes/sources/$TARGET
+cd /Volumes/sources/$TARGET
+ct-ng build
+
+sed -e 's/"${sed}" -r/"${sed}" -E/' -i /Volumes/toolchains/$TARGET/bin/$TARGET-populate
+
+mkdir -p /Volumes/toolchains/sysroots
+rm -rf /Volumes/toolchains/sysroots/$TARGET
+/Volumes/toolchains/$TARGET/bin/$TARGET-populate -s /Volumes/toolchains/$TARGET/$TARGET/sysroot -d /Volumes/toolchains/sysroots/$TARGET
+
+if [ -x "$TARGET/install" ]; then
+  $TARGET/install
+fi
