@@ -1,326 +1,143 @@
-use std::fmt;
 use std::fs::File;
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::iter::Iterator;
+use std::time::Duration;
 
-use cpal::{DefaultFormatError, Format, Sample};
-use log::{debug, error, info};
+use cpal::traits::DeviceTrait;
+use cpal::Device;
+use log::{error, info, trace};
 use rodio::decoder::Decoder;
-use rodio::source::Source;
-use rodio::{default_output_device, play_raw};
-use serde::ser::SerializeMap;
-use serde::{Deserialize, Serialize, Serializer};
+use rodio::source::{from_iter, UniformSourceIterator};
+use rodio::{default_output_device, output_devices, Sample, Sink, Source};
 
-const PREVIOUS_DELAY: u64 = 2;
+use crate::events::{Event, MessageSender};
+use crate::track::Track;
+use crate::MusicResult;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Track {
-    path: PathBuf,
-    title: String,
-}
-
-impl Track {
-    pub fn new(path: &Path) -> Track {
-        let title = match path.file_stem() {
-            Some(name) => name.to_string_lossy().to_string(),
-            None => path.display().to_string(),
-        };
-
-        Track {
-            path: path.to_owned(),
-            title,
-        }
-    }
-
-    pub fn title(&self) -> String {
-        self.title.clone()
-    }
-
-    pub fn decode(&self) -> Result<Decoder<File>, String> {
-        Decoder::new(File::open(&self.path).map_err(|e| e.to_string())?).map_err(|e| e.to_string())
-    }
-}
-
-impl fmt::Display for Track {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.path.display().fmt(f)
-    }
-}
-
-#[derive(Debug, Default)]
-struct Playlist {
-    position: usize,
+pub struct PlaylistSource {
+    event_sender: MessageSender<Event>,
     tracks: Vec<Track>,
 }
 
-#[derive(Default)]
-struct PlayerState {
-    playlist: Option<Playlist>,
-    paused: bool,
-    volume: f32,
-    resync: bool,
+impl PlaylistSource {
+    pub fn init(
+        tracks: Vec<Track>,
+        sender: MessageSender<Event>,
+    ) -> impl Source<Item = i16> + Send {
+        let iterator = PlaylistSource {
+            event_sender: sender,
+            tracks,
+        };
 
-    previous_duration: Option<Duration>,
-    last_start: Option<Instant>,
+        from_iter(iterator)
+    }
 }
 
-impl PlayerState {
-    pub fn current_track(&self) -> Option<Track> {
-        self.playlist
-            .as_ref()
-            .and_then(|p| p.tracks.get(p.position).cloned())
-    }
+impl Iterator for PlaylistSource {
+    type Item = Box<dyn Source<Item = i16> + Send>;
 
-    pub fn next_track(&mut self) -> Option<Track> {
-        debug!("Starting next track.");
-        self.previous_duration = None;
-        self.last_start = None;
+    fn next(&mut self) -> Option<Self::Item> {
+        while !self.tracks.is_empty() {
+            let track = self.tracks.remove(0);
 
-        if let Some(ref mut playlist) = self.playlist {
-            playlist.position += 1;
-
-            if playlist.position >= playlist.tracks.len() {
-                info!("Reached end of playlist.");
-                self.playlist = None;
+            match track.decode() {
+                Ok(decoded) => {
+                    let uniform =
+                        UniformSourceIterator::<Decoder<File>, i16>::new(decoded, 1, 22050);
+                    let sender = self.event_sender.clone();
+                    let mut millis = 0;
+                    let periodic = uniform.periodic_access(Duration::from_millis(500), move |_s| {
+                        millis += 500;
+                        sender.send(Event::PlaybackDuration(Duration::from_millis(millis)).into());
+                    });
+                    self.event_sender.send(Event::PlaybackStarted(track).into());
+                    return Some(Box::new(periodic));
+                }
+                Err(e) => {
+                    error!("Failed to decode '{}': {}", track.path().display(), e);
+                }
             }
         }
 
-        self.current_track()
-    }
+        self.event_sender.send(Event::PlaybackEnded.into());
 
-    pub fn paused(&self) -> bool {
-        self.paused
-    }
-
-    pub fn track_position(&self) -> Option<Duration> {
-        match (self.last_start, self.previous_duration) {
-            (Some(instant), Some(duration)) => Some((Instant::now() - instant) + duration),
-            (Some(instant), None) => Some(Instant::now() - instant),
-            (None, Some(duration)) => Some(duration),
-            (None, None) => None,
-        }
+        None
     }
 }
 
 pub struct Player {
-    state: Arc<Mutex<PlayerState>>,
-}
-
-impl Serialize for Player {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let state = self.state.lock().unwrap();
-
-        let mut map = serializer.serialize_map(Some(5))?;
-        map.serialize_entry("current_track", &state.current_track())?;
-        map.serialize_entry("duration", &state.track_position())?;
-        map.serialize_entry("volume", &state.volume)?;
-        map.serialize_entry("paused", &state.paused)?;
-        map.serialize_entry("resync", &state.resync)?;
-        map.end()
-    }
+    sink: Option<Sink>,
+    device: Device,
+    volume: f32,
 }
 
 impl Player {
-    pub fn new() -> Result<Player, String> {
-        if let Some(device) = default_output_device() {
-            let format = match device.default_output_format() {
-                Ok(f) => f,
-                Err(DefaultFormatError::DeviceNotAvailable) => {
-                    return Err(String::from("Device not available."))
-                }
-                Err(DefaultFormatError::StreamTypeNotSupported) => {
-                    return Err(String::from("No supported output formats."))
-                }
-            };
+    pub fn new(volume: f32) -> MusicResult<Player> {
+        let devices =
+            output_devices().map_err(|_e| String::from("Unable to enumerate output devices."))?;
+        for device in devices {
+            let name = device
+                .name()
+                .map_err(|_e| String::from("Unable to retrieve device name."))?;
+            trace!("Found device '{}'", name);
+        }
 
+        if let Some(device) = default_output_device() {
             info!(
-                "Using device '{}'. Sample rate: {}, channels: {}.",
-                device.name(),
-                format.sample_rate.0,
-                format.channels
+                "Using device '{}'.",
+                device
+                    .name()
+                    .map_err(|_e| String::from("Unable to retrieve device name."))?,
             );
 
-            let state = Arc::new(Mutex::new(PlayerState {
-                playlist: None,
-                paused: false,
-                volume: 1.0,
-                resync: false,
-
-                previous_duration: None,
-                last_start: None,
-            }));
-
-            let source = PlayerSource::new(&format, state.clone());
-            play_raw(&device, source);
-
-            let player = Player { state };
-
-            Ok(player)
+            Ok(Player {
+                sink: None,
+                device,
+                volume,
+            })
         } else {
-            Err(String::from("No output device exists."))
+            Err(String::from("Unable to find default output device."))
         }
     }
 
-    pub fn start_tracks(&self, tracks: Vec<Track>, force: bool) {
-        let mut state = self.state.lock().unwrap();
-        if let Some(ref mut playlist) = state.playlist {
-            if !force && playlist.tracks == tracks {
-                info!("Not replacing tracks that are already playing.");
-                state.paused = false;
-                return;
-            }
+    pub fn start<S>(&mut self, source: S)
+    where
+        S: Source + Send + 'static,
+        S::Item: Sample,
+        S::Item: Send,
+    {
+        if let Some(sink) = self.sink.take() {
+            sink.stop();
         }
 
-        info!("Starting {} tracks.", tracks.len());
-        state.playlist = Some(Playlist {
-            tracks,
-            position: 0,
-        });
-        state.paused = false;
-        state.resync = true;
+        let sink = Sink::new(&self.device);
+        sink.set_volume(self.volume);
+        sink.append(source);
+
+        self.sink = Some(sink);
     }
 
-    pub fn play_pause(&mut self) {
-        if self.is_paused() {
-            self.play();
-        } else {
-            self.pause();
+    pub fn stop(&mut self) {
+        if let Some(sink) = self.sink.take() {
+            sink.stop();
         }
     }
 
     pub fn play(&self) {
-        self.state.lock().unwrap().paused = false;
-    }
-
-    pub fn pause(&self) {
-        self.state.lock().unwrap().paused = true;
-    }
-
-    pub fn is_paused(&self) -> bool {
-        self.state.lock().unwrap().paused()
-    }
-
-    pub fn next(&self) {
-        let mut state = self.state.lock().unwrap();
-        if let Some(ref mut playlist) = state.playlist {
-            if playlist.position + 1 < playlist.tracks.len() {
-                playlist.position += 1;
-                state.resync = true;
-            }
+        if let Some(ref sink) = self.sink {
+            sink.play();
         }
     }
 
-    pub fn previous(&self) {
-        let mut state = self.state.lock().unwrap();
-        if let Some(duration) = state.track_position() {
-            if let Some(ref mut playlist) = state.playlist {
-                if playlist.position > 0 && duration.as_secs() < PREVIOUS_DELAY {
-                    playlist.position -= 1;
-                }
-                state.resync = true;
-            }
+    pub fn pause(&self) {
+        if let Some(ref sink) = self.sink {
+            sink.pause();
         }
     }
 
     pub fn set_volume(&mut self, volume: f32) {
-        self.state.lock().unwrap().volume = volume;
-    }
-
-    pub fn volume(&self) -> f32 {
-        self.state.lock().unwrap().volume
-    }
-}
-
-struct PlayerSource {
-    sample_rate: u32,
-    channels: u16,
-    inner: Option<Decoder<File>>,
-    state: Arc<Mutex<PlayerState>>,
-}
-
-impl PlayerSource {
-    fn new(format: &Format, state: Arc<Mutex<PlayerState>>) -> PlayerSource {
-        PlayerSource {
-            inner: None,
-            sample_rate: format.sample_rate.0,
-            channels: format.channels,
-            state,
-        }
-    }
-
-    fn start_play(&mut self, track: Track) {
-        info!("Starting track '{}'.", track.title());
-        let mut state = self.state.lock().unwrap();
-        state.previous_duration = None;
-        let decoder = match track.decode() {
-            Ok(d) => d,
-            Err(e) => {
-                error!("Error decoding {}: {}", track.title(), e);
-                self.inner = None;
-                state.last_start = None;
-                return;
-            }
-        };
-        // .map(|source| UniformSourceIterator::new(source, self.channels, self.sample_rate));
-        self.inner = Some(decoder);
-        state.last_start = Some(Instant::now());
-    }
-}
-
-impl Source for PlayerSource {
-    fn current_frame_len(&self) -> Option<usize> {
-        self.inner.as_ref().and_then(|i| i.current_frame_len())
-    }
-
-    fn channels(&self) -> u16 {
-        self.channels
-    }
-
-    fn sample_rate(&self) -> u32 {
-        self.sample_rate
-    }
-
-    fn total_duration(&self) -> Option<Duration> {
-        self.inner.as_ref().and_then(|i| i.total_duration())
-    }
-}
-
-impl Iterator for PlayerSource {
-    type Item = f32;
-
-    fn next(&mut self) -> Option<f32> {
-        loop {
-            let next: Option<Track> = {
-                let mut state = self.state.lock().unwrap();
-
-                if state.resync {
-                    debug!("Syncing Source.");
-                    state.resync = false;
-                    state.current_track()
-                } else if !state.paused {
-                    if let Some(ref mut inner) = self.inner {
-                        if let Some(sample) = inner.next() {
-                            return Some(sample.to_f32() * state.volume);
-                        }
-
-                        state.next_track()
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            };
-
-            if let Some(track) = next {
-                self.start_play(track);
-            } else {
-                return Some(0.0);
-            }
+        self.volume = volume;
+        if let Some(ref sink) = self.sink {
+            sink.set_volume(volume);
         }
     }
 }

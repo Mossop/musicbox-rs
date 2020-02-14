@@ -4,12 +4,16 @@ mod hw_config;
 mod musicbox;
 mod player;
 mod playlist;
+mod track;
 
 use std::fmt::Display;
 
 use log::error;
 
 pub use musicbox::MusicBox;
+
+pub type MusicResult<T> = Result<T, String>;
+pub type VoidResult = MusicResult<()>;
 
 trait ResultErrorLogger<E>
 where

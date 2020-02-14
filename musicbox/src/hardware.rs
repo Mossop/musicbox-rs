@@ -6,8 +6,9 @@ use log::{debug, error};
 use rpi_futures::gpio::{ButtonEvent, InputPinEvents};
 use rppal::gpio::{Gpio, Level, OutputPin, PullUpDown};
 
-use crate::events::Event;
+use crate::events::{Command, Message};
 use crate::hw_config::{ButtonConfig, OutputConfig};
+use crate::MusicResult;
 
 const BUTTON_HOLD_TIMEOUT: Duration = Duration::from_secs(1);
 
@@ -17,7 +18,7 @@ pub struct LED {
 }
 
 impl LED {
-    pub fn new(gpio: &Gpio, config: &OutputConfig) -> Result<LED, String> {
+    pub fn new(gpio: &Gpio, config: &OutputConfig) -> MusicResult<LED> {
         debug!(
             "Creating LED for pin {}, on level: {}",
             config.pin, config.on
@@ -57,9 +58,9 @@ impl Drop for LED {
 pub fn event_stream(
     gpio: &Gpio,
     config: &ButtonConfig,
-    click_event: Event,
-    hold_event: Option<Event>,
-) -> Result<impl Stream<Item = Event>, String> {
+    click_event: Command,
+    hold_event: Option<Command>,
+) -> MusicResult<impl Stream<Item = Message<Command>>> {
     debug!("Creating event button for pin {}, type {}, on level: {}, click event {:?}, hold event {:?}", config.pin, config.kind, config.on, click_event, hold_event);
     let pin = match gpio.get(config.pin) {
         Ok(p) => p,
@@ -84,11 +85,15 @@ pub fn event_stream(
             }
         };
 
+    let pin: u8 = config.pin;
     Ok(events.filter_map(move |r| {
         ready(match r {
-            Ok(ButtonEvent::Click(_)) => Some(click_event.clone()),
-            Ok(ButtonEvent::Hold(_)) => hold_event.clone(),
-            Err(e) => Some(Event::Error(e.to_string())),
+            Ok(ButtonEvent::Click(i)) => Some(Message::new(i, click_event.clone())),
+            Ok(ButtonEvent::Hold(i)) => hold_event.as_ref().map(|e| Message::new(i, e.clone())),
+            Err(e) => {
+                error!("Failure while polling button on pin {}: {}", pin, e);
+                None
+            }
             _ => None,
         })
     }))

@@ -1,20 +1,20 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
-use futures::stream::StreamExt;
+use futures::stream::{Stream, StreamExt};
 use log::{debug, error, info};
 use rppal::gpio::Gpio;
 use serde::Serialize;
 use tokio::fs::{create_dir_all, metadata, read_dir};
 
-use crate::events::{Event, EventStream};
+use crate::events::{Command, Message};
 use crate::hardware::{event_stream, LED};
 use crate::hw_config::PlaylistConfig;
-use crate::player::Track;
-use crate::ResultErrorLogger;
+use crate::track::Track;
+use crate::{MusicResult, ResultErrorLogger, VoidResult};
 
 #[derive(Serialize)]
-pub struct Playlist {
+pub struct StoredPlaylist {
     root: PathBuf,
     name: String,
     tracks: Vec<Track>,
@@ -22,13 +22,12 @@ pub struct Playlist {
     led: LED,
 }
 
-impl Playlist {
+impl StoredPlaylist {
     pub async fn new(
         data_dir: &Path,
         gpio: &Gpio,
         config: &PlaylistConfig,
-        events: &EventStream,
-    ) -> Result<Playlist, String> {
+    ) -> MusicResult<(StoredPlaylist, impl Stream<Item = Message<Command>>)> {
         let mut root = data_dir.to_owned();
         root.push("playlists".parse::<PathBuf>().map_err(|e| e.to_string())?);
         root.push(config.name.parse::<PathBuf>().map_err(|e| e.to_string())?);
@@ -60,7 +59,7 @@ impl Playlist {
             }
         }
 
-        let mut playlist = Playlist {
+        let mut playlist = StoredPlaylist {
             root,
             led: LED::new(gpio, &config.display)?,
             name: config.name.clone(),
@@ -71,17 +70,15 @@ impl Playlist {
         let button = event_stream(
             gpio,
             &config.start,
-            Event::StartPlaylist(config.name.clone(), false),
-            Some(Event::StartPlaylist(config.name.clone(), true)),
+            Command::StartPlaylist(config.name.clone(), false),
+            Some(Command::StartPlaylist(config.name.clone(), true)),
         )
         .log_error(|e| format!("Failed to create playlist {} button: {}", config.name, e))?;
 
-        events.add_event_stream(button);
-
-        Ok(playlist)
+        Ok((playlist, button))
     }
 
-    pub async fn rescan(&mut self) -> Result<(), String> {
+    pub async fn rescan(&mut self) -> VoidResult {
         self.tracks = read_dir(self.root.clone())
             .await
             .map_err(|e| e.to_string())?
@@ -130,5 +127,9 @@ impl Playlist {
 
     pub fn tracks(&self) -> Vec<Track> {
         self.tracks.clone()
+    }
+
+    pub fn equals(&self, tracks: &Vec<Track>) -> bool {
+        &self.tracks == tracks
     }
 }

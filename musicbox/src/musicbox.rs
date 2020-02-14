@@ -3,39 +3,245 @@ use std::fs::File;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::process::id;
+use std::time::Duration;
 
 use daemonize::{Daemonize, DaemonizeError};
+use futures::channel::mpsc::{channel, Sender};
 use futures::compat::*;
-use futures::stream::StreamExt;
+use futures::future::{join_all, poll_fn, ready};
+use futures::select;
+use futures::stream::{Stream, StreamExt};
 use log::{error, info};
 use rppal::gpio::Gpio;
-use serde::Serialize;
-use serde_json::{from_reader, to_string_pretty};
+use serde_json::from_reader;
 use signal_hook::iterator::Signals;
 use tokio::runtime::Runtime;
 
-use crate::events::{Event, EventStream};
+use crate::events::{Command, Event, Message, MessageSender, MessageStream, SyncMessageChannel};
 use crate::hardware::event_stream;
 use crate::hw_config::HwConfig;
-use crate::player::Player;
-use crate::playlist::Playlist;
+use crate::player::{Player, PlaylistSource};
+use crate::playlist::StoredPlaylist;
+use crate::track::Track;
 use crate::ResultErrorLogger;
+use crate::{MusicResult, VoidResult};
 
 const HW_CONFIG_NAME: &str = "hwconfig.json";
 const VOLUME_INTERVAL: f32 = 0.1;
 
-#[derive(Serialize)]
+pub struct PlayState {
+    position: usize,
+    duration: Duration,
+    paused: bool,
+}
+
 pub struct MusicBox {
-    playlists: HashMap<String, Playlist>,
+    events: MessageStream<Event>,
+    commands: MessageStream<Command>,
+    stored_playlists: HashMap<String, StoredPlaylist>,
+    event_listeners: Vec<Sender<Message<Event>>>,
+    playlist: Vec<Track>,
+    play_state: Option<PlayState>,
     player: Player,
-    #[serde(skip)]
-    event_stream: EventStream,
+    volume: f32,
+    audio_events: MessageSender<Event>,
 }
 
 impl MusicBox {
+    pub fn new(volume: f32) -> MusicResult<MusicBox> {
+        let (sender, receiver) = SyncMessageChannel::init();
+
+        let mut music_box = MusicBox {
+            volume,
+            player: Player::new(volume)?,
+            events: Default::default(),
+            commands: Default::default(),
+            stored_playlists: Default::default(),
+            event_listeners: Default::default(),
+            playlist: Default::default(),
+            play_state: Default::default(),
+            audio_events: sender,
+        };
+
+        music_box.add_event_stream(receiver);
+        Ok(music_box)
+    }
+
+    pub fn add_event_stream<S>(&mut self, stream: S)
+    where
+        S: Stream<Item = Message<Event>> + 'static,
+    {
+        self.events.add_stream(stream)
+    }
+
+    pub fn add_command_stream<S>(&mut self, stream: S)
+    where
+        S: Stream<Item = Message<Command>> + 'static,
+    {
+        self.commands.add_stream(stream)
+    }
+
+    fn play(&mut self, tracks: Vec<Track>, position: usize) {
+        self.play_state = Some(PlayState {
+            paused: false,
+            position,
+            duration: Duration::from_secs(0),
+        });
+
+        self.player
+            .start(PlaylistSource::init(tracks, self.audio_events.clone()));
+    }
+
+    async fn send_event(sender: &mut Sender<Message<Event>>, event: Message<Event>) {
+        let ready = poll_fn(|cx| sender.poll_ready(cx));
+        if let Err(_e) = ready.await {
+            return;
+        }
+        if let Err(_e) = sender.start_send(event) {
+            return;
+        }
+    }
+
+    async fn dispatch_event(&mut self, event: Message<Event>) {
+        join_all(
+            self.event_listeners
+                .iter_mut()
+                .map(|sender| MusicBox::send_event(sender, event.clone())),
+        )
+        .await;
+    }
+
+    async fn handle_command(&mut self, command: Message<Command>) {
+        info!("Saw command {:?}", command.payload);
+
+        match command.payload {
+            Command::PreviousTrack => {
+                let (tracks, position) = match self.play_state {
+                    Some(ref mut state) => {
+                        if state.position > 0 && state.duration.as_secs() < 2 {
+                            state.position -= 1;
+                        }
+                        (
+                            self.playlist.iter().skip(state.position).cloned().collect(),
+                            state.position,
+                        )
+                    }
+                    None => return,
+                };
+                self.play(tracks, position);
+            }
+            Command::NextTrack => {
+                let (tracks, position) = match self.play_state {
+                    Some(ref mut state) => {
+                        state.position += 1;
+                        if state.position >= self.playlist.len() {
+                            self.play_state = None;
+                            self.player.stop();
+                            return;
+                        }
+                        state.paused = false;
+                        (
+                            self.playlist.iter().skip(state.position).cloned().collect(),
+                            state.position,
+                        )
+                    }
+                    None => return,
+                };
+                self.play(tracks, position);
+            }
+            Command::PlayPause => {
+                if let Some(ref mut state) = self.play_state {
+                    state.paused = !state.paused;
+                    if state.paused {
+                        self.player.pause();
+                    } else {
+                        self.player.play();
+                    }
+                } else if !self.playlist.is_empty() {
+                    self.play(self.playlist.clone(), 0);
+                }
+            }
+            Command::VolumeUp => {
+                self.volume += VOLUME_INTERVAL;
+                if self.volume > 1.0 {
+                    self.volume = 1.0;
+                }
+                self.player.set_volume(self.volume);
+            }
+            Command::VolumeDown => {
+                self.volume -= VOLUME_INTERVAL;
+                if self.volume < 0.0 {
+                    self.volume = 0.0;
+                }
+                self.player.set_volume(self.volume);
+            }
+            Command::Shutdown => {
+                info!("Music box clean shutdown.");
+                self.player.stop();
+                self.dispatch_event(Event::Shutdown.into()).await;
+            }
+            Command::StartPlaylist(name, force) => {
+                if let Some(playlist) = self.stored_playlists.get(&name) {
+                    if playlist.equals(&self.playlist) && !force {
+                        return;
+                    }
+
+                    self.playlist = playlist.tracks();
+                    self.play_state = Some(PlayState {
+                        position: 0,
+                        duration: Duration::from_secs(0),
+                        paused: false,
+                    });
+
+                    self.play(self.playlist.clone(), 0);
+                } else {
+                    error!(
+                        "Received a request to start playlist {} but that list does not exist.",
+                        name
+                    );
+                }
+            }
+            Command::Reload => {}
+            Command::Status => {}
+        }
+    }
+
+    async fn handle_event(&mut self, event: Message<Event>) {
+        info!("Saw event {:?}", event.payload);
+
+        self.dispatch_event(event).await;
+    }
+
+    pub fn get_event_stream(&mut self) -> impl Stream<Item = Message<Event>> {
+        let (sender, receiver) = channel(20);
+        self.event_listeners.push(sender);
+        receiver
+    }
+
+    async fn run(mut self) -> VoidResult {
+        info!("Music box startup. Running as process {}.", id());
+
+        loop {
+            select! {
+                c = self.commands.next() => if let Some(command) = c {
+                    self.handle_command(command.clone()).await;
+                    if command.payload == Command::Shutdown {
+                        break;
+                    }
+                },
+                e = self.events.next() => if let Some(event) = e {
+                    self.handle_event(event).await
+                },
+                complete => break,
+            }
+        }
+
+        Ok(())
+    }
+
     // Should perform any privileged actions before the daemon reduces
     // privileges.
-    async fn init(data_dir: &Path) -> Result<MusicBox, String> {
+    async fn init(data_dir: &Path) -> MusicResult<MusicBox> {
         let mut hw_config_file = data_dir.to_owned();
         hw_config_file.push(HW_CONFIG_NAME.parse::<PathBuf>().unwrap());
 
@@ -52,26 +258,28 @@ impl MusicBox {
 
         let gpio = Gpio::new().map_err(|e| e.to_string())?;
 
-        let stream = EventStream::new();
-        let mut map = HashMap::with_capacity(hw_config.playlists.len());
+        let mut music_box: MusicBox = MusicBox::new(0.5)?;
+
+        music_box
+            .stored_playlists
+            .reserve(hw_config.playlists.len());
         for config in hw_config.playlists {
-            let playlist = match Playlist::new(data_dir, &gpio, &config, &stream).await {
+            let (playlist, stream) = match StoredPlaylist::new(data_dir, &gpio, &config).await {
                 Ok(p) => p,
                 Err(_) => continue,
             };
-            map.insert(playlist.name(), playlist);
+            music_box.stored_playlists.insert(playlist.name(), playlist);
+            music_box.add_command_stream(stream);
         }
 
         for event in hw_config.inputs {
-            stream.add_event_stream(event_stream(
+            music_box.add_command_stream(event_stream(
                 &gpio,
                 &event.button,
                 event.action.clone(),
                 None,
             )?);
         }
-
-        let player = Player::new()?;
 
         match Signals::new(&[
             signal_hook::SIGHUP,
@@ -84,15 +292,23 @@ impl MusicBox {
         .and_then(|s| s.into_async())
         {
             Ok(signals) => {
-                stream.add_event_stream(signals.compat().map(|r| match r {
-                    Ok(signal_hook::SIGHUP) => Event::Reload,
-                    Ok(signal_hook::SIGTERM) => Event::Shutdown,
-                    Ok(signal_hook::SIGINT) => Event::Shutdown,
-                    Ok(signal_hook::SIGQUIT) => Event::Shutdown,
-                    Ok(signal_hook::SIGUSR1) => Event::Status,
-                    Ok(signal_hook::SIGUSR2) => Event::StartPlaylist(String::from("red"), true),
-                    Ok(signal) => Event::Error(format!("Received unexpected signal {}.", signal)),
-                    Err(e) => Event::Error(e.to_string()),
+                music_box.add_command_stream(signals.compat().filter_map(|r| match r {
+                    Ok(signal_hook::SIGHUP) => ready(Some(Command::Reload.into())),
+                    Ok(signal_hook::SIGTERM) => ready(Some(Command::Shutdown.into())),
+                    Ok(signal_hook::SIGINT) => ready(Some(Command::Shutdown.into())),
+                    Ok(signal_hook::SIGQUIT) => ready(Some(Command::Shutdown.into())),
+                    Ok(signal_hook::SIGUSR1) => ready(Some(Command::Status.into())),
+                    Ok(signal_hook::SIGUSR2) => ready(Some(
+                        Command::StartPlaylist(String::from("red"), true).into(),
+                    )),
+                    Ok(signal) => {
+                        error!("Received unexpected signal {}.", signal);
+                        ready(None)
+                    }
+                    Err(e) => {
+                        error!("Received unknown error: {}", e);
+                        ready(None)
+                    }
                 }));
             }
             Err(e) => {
@@ -100,78 +316,21 @@ impl MusicBox {
             }
         }
 
-        let music_box = MusicBox {
-            player,
-            playlists: map,
-            event_stream: stream,
-        };
-
         Ok(music_box)
     }
 
-    async fn run(mut self) -> Result<(), String> {
-        info!("Music box startup. Running as process {}.", id());
-
-        loop {
-            let event = match self.event_stream.next().await {
-                Some(e) => e,
-                None => return Ok(()),
-            };
-
-            info!("Saw event {:?}", event);
-
-            match event {
-                Event::PreviousTrack => self.player.previous(),
-                Event::NextTrack => self.player.next(),
-                Event::PlayPause => self.player.play_pause(),
-                Event::VolumeUp => self
-                    .player
-                    .set_volume(self.player.volume() + VOLUME_INTERVAL),
-                Event::VolumeDown => self
-                    .player
-                    .set_volume(self.player.volume() - VOLUME_INTERVAL),
-                Event::Shutdown => {
-                    info!("Music box clean shutdown.");
-                    return Ok(());
-                }
-                Event::StartPlaylist(name, force) => {
-                    if let Some(playlist) = self.playlists.get(&name) {
-                        self.player.start_tracks(playlist.tracks(), force);
-                    } else {
-                        error!(
-                            "Received a request to start playlist {} but that list does not exist.",
-                            name
-                        );
-                    }
-                }
-                Event::Reload => {
-                    for playlist in self.playlists.values_mut() {
-                        playlist.rescan().await?;
-                    }
-                }
-                Event::Status => match to_string_pretty(&self) {
-                    Ok(json) => println!("{}", json),
-                    Err(e) => error!("Error generating status: {}.", e),
-                },
-                Event::Error(s) => {
-                    error!("{}", s);
-                }
-            }
-        }
-    }
-
-    async fn init_and_run(data_dir: &Path) -> Result<(), String> {
+    async fn init_and_run(data_dir: &Path) -> VoidResult {
         let music_box = MusicBox::init(data_dir).await?;
         music_box.run().await
     }
 
-    pub fn block(data_dir: &Path) -> Result<(), String> {
+    pub fn block(data_dir: &Path) -> VoidResult {
         let mut runtime = Runtime::new().map_err(|e| e.to_string())?;
 
         runtime.block_on(MusicBox::init_and_run(data_dir))
     }
 
-    pub fn daemonize(data_dir: &Path) -> Result<(), String> {
+    pub fn daemonize(data_dir: &Path) -> VoidResult {
         let path = data_dir.to_owned();
 
         // If forking fails we still run in the parent process. If it succeeds
