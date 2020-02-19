@@ -7,8 +7,6 @@ use clap::{load_yaml, App};
 use musicbox::MusicBox;
 
 fn main() {
-    env_logger::init();
-
     let yaml = load_yaml!("cli.yml");
     let matches = App::from_yaml(yaml).get_matches();
 

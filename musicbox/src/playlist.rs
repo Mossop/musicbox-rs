@@ -1,43 +1,55 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
-use futures::stream::{Stream, StreamExt};
+use futures::stream::StreamExt;
 use log::{debug, error, info};
-use rppal::gpio::Gpio;
-use serde::Serialize;
+use serde::Deserialize;
 use tokio::fs::{create_dir_all, metadata, read_dir};
 
-use crate::events::{Command, Message};
-use crate::hardware::{event_stream, LED};
-use crate::hw_config::PlaylistConfig;
+use crate::error::{MusicResult, VoidResult};
+#[cfg(target_arch = "arm")]
+use crate::hardware::gpio::led::{LEDConfig, LED};
 use crate::track::Track;
-use crate::{MusicResult, ResultErrorLogger, VoidResult};
 
-#[derive(Serialize)]
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlaylistConfig {
+    pub name: String,
+    pub title: String,
+    #[cfg(target_arch = "arm")]
+    pub led: LEDConfig,
+}
+
 pub struct StoredPlaylist {
     root: PathBuf,
     name: String,
     tracks: Vec<Track>,
-    #[serde(skip)]
-    led: LED,
+    #[cfg(target_arch = "arm")]
+    pub led: LED,
 }
 
 impl StoredPlaylist {
-    pub async fn new(
+    pub async fn init(
         data_dir: &Path,
-        gpio: &Gpio,
-        config: &PlaylistConfig,
-    ) -> MusicResult<(StoredPlaylist, impl Stream<Item = Message<Command>>)> {
+        configs: Vec<PlaylistConfig>,
+    ) -> MusicResult<Vec<StoredPlaylist>> {
+        let mut collection = Vec::with_capacity(configs.len());
+        for config in configs {
+            let playlist = StoredPlaylist::new(data_dir, &config).await?;
+            collection.push(playlist);
+        }
+        Ok(collection)
+    }
+
+    pub async fn new(data_dir: &Path, config: &PlaylistConfig) -> MusicResult<StoredPlaylist> {
         let mut root = data_dir.to_owned();
         root.push("playlists".parse::<PathBuf>().map_err(|e| e.to_string())?);
         root.push(config.name.parse::<PathBuf>().map_err(|e| e.to_string())?);
 
         debug!(
-            "Creating playlist {}, data: '{}', button pin: {}, led pin: {}",
+            "Creating playlist {}, data: '{}'",
             config.name,
             root.display(),
-            config.start.pin,
-            config.display.pin
         );
 
         if let Err(e) = metadata(&root).await {
@@ -61,21 +73,14 @@ impl StoredPlaylist {
 
         let mut playlist = StoredPlaylist {
             root,
-            led: LED::new(gpio, &config.display)?,
             name: config.name.clone(),
-            tracks: Default::default(),
+            tracks: Vec::new(),
+            #[cfg(target_arch = "arm")]
+            led: LED::new(&config.led)?,
         };
         playlist.rescan().await?;
 
-        let button = event_stream(
-            gpio,
-            &config.start,
-            Command::StartPlaylist(config.name.clone(), false),
-            Some(Command::StartPlaylist(config.name.clone(), true)),
-        )
-        .log_error(|e| format!("Failed to create playlist {} button: {}", config.name, e))?;
-
-        Ok((playlist, button))
+        Ok(playlist)
     }
 
     pub async fn rescan(&mut self) -> VoidResult {
@@ -112,9 +117,11 @@ impl StoredPlaylist {
 
         if self.tracks.is_empty() {
             info!("{} playlist has no tracks.", self.name);
+            #[cfg(target_arch = "arm")]
             self.led.off();
         } else {
             info!("{} playlist has {} tracks.", self.name, self.tracks.len());
+            #[cfg(target_arch = "arm")]
             self.led.on();
         }
 
@@ -129,7 +136,7 @@ impl StoredPlaylist {
         self.tracks.clone()
     }
 
-    pub fn equals(&self, tracks: &Vec<Track>) -> bool {
-        &self.tracks == tracks
+    pub fn equals(&self, tracks: &[Track]) -> bool {
+        self.tracks == tracks
     }
 }

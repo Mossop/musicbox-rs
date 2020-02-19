@@ -6,9 +6,7 @@ use std::time::{Duration, Instant};
 use futures::stream::{FusedStream, Stream};
 use serde::{Deserialize, Serialize};
 
-use crate::track::Track;
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub enum Command {
     PreviousTrack,
     NextTrack,
@@ -21,12 +19,14 @@ pub enum Command {
     Status,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum Event {
-    Error(String),
-    PlaybackStarted(Track),
+    PlaylistUpdated,
+    PlaybackStarted,
+    PlaybackPaused,
+    PlaybackUnpaused,
     PlaybackEnded,
-    PlaybackDuration(Duration),
+    PlaybackPosition(Duration),
     Shutdown,
 }
 

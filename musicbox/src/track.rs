@@ -1,11 +1,7 @@
 use std::fmt;
-use std::fs::File;
 use std::path::{Path, PathBuf};
 
-use rodio::decoder::Decoder;
 use serde::{Deserialize, Serialize};
-
-use crate::MusicResult;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Track {
@@ -28,10 +24,6 @@ impl Track {
 
     pub fn path(&self) -> PathBuf {
         self.path.clone()
-    }
-
-    pub fn decode(&self) -> MusicResult<Decoder<File>> {
-        Decoder::new(File::open(&self.path).map_err(|e| e.to_string())?).map_err(|e| e.to_string())
     }
 }
 

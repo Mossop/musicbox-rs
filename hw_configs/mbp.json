@@ -68,87 +68,17 @@
       "StartPlaylist": ["yellow", false]
     }
   }],
-  "buttons": [{
-    "command": "PreviousTrack",
-    "pin": 27,
-    "kind": "PullUp",
-    "on": "Low"
-  }, {
-    "command": "NextTrack",
-    "pin": 23,
-    "kind": "PullUp",
-    "on": "Low"
-  }, {
-    "command": "PlayPause",
-    "pin": 22,
-    "kind": "PullUp",
-    "on": "Low"
-  }, {
-    "command": "VolumeUp",
-    "pin": 4,
-    "kind": "PullUp",
-    "on": "Low"
-  }, {
-    "command": "VolumeDown",
-    "pin": 17,
-    "kind": "PullUp",
-    "on": "Low"
-  }, {
-    "command": {
-      "StartPlaylist": ["red", false]
-    },
-    "pin": 24,
-    "kind": "PullUp",
-    "on": "Low"
-  }, {
-    "command": {
-      "StartPlaylist": ["green", false]
-    },
-    "pin": 5,
-    "kind": "PullUp",
-    "on": "Low"
-  }, {
-    "command": {
-      "StartPlaylist": ["yellow", false]
-    },
-    "pin": 12,
-    "kind": "PullUp",
-    "on": "Low"
-  }, {
-    "command": {
-      "StartPlaylist": ["blue", false]
-    },
-    "pin": 16,
-    "kind": "PullUp",
-    "on": "Low"
-  }],
   "playlists": [{
     "name": "red",
-    "title": "Red Playlist",
-    "led": {
-      "pin": 25,
-      "on": "High"
-    }
+    "title": "Red Playlist"
   }, {
     "name": "green",
-    "title": "Green Playlist",
-    "led": {
-      "pin": 6,
-      "on": "High"
-    }
+    "title": "Green Playlist"
   }, {
     "name": "yellow",
-    "title": "Yellow Playlist",
-    "led": {
-      "pin": 13,
-      "on": "High"
-    }
+    "title": "Yellow Playlist"
   }, {
     "name": "blue",
-    "title": "Blue Playlist",
-    "led": {
-      "pin": 20,
-      "on": "High"
-    }
+    "title": "Blue Playlist"
   }]
 }

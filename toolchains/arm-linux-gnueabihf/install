@@ -1,0 +1,33 @@
+#! /bin/sh
+
+BASE="http://archive.raspbian.org/raspbian"
+SYSROOT="/Volumes/toolchains/sysroots/$TARGET"
+
+install_deb() {
+  URL=$BASE/$1
+  curl $URL >$TMPDIR/package.deb
+  dpkg --extract $TMPDIR/package.deb $SYSROOT
+  rm $TMPDIR/package.deb
+}
+
+install_deb pool/main/g/glibc/libc6_2.28-10+rpi1_armhf.deb
+install_deb pool/main/a/alsa-lib/libasound2_1.1.8-1_armhf.deb
+install_deb pool/main/a/alsa-lib/libasound2-dev_1.1.8-1_armhf.deb
+install_deb pool/main/p/pcre3/libpcre3_8.39-12_armhf.deb
+install_deb pool/main/p/pcre3/libpcre3-dev_8.39-12_armhf.deb
+install_deb pool/main/libf/libffi/libffi6_3.2.1-9_armhf.deb
+install_deb pool/main/libf/libffi/libffi-dev_3.2.1-9_armhf.deb
+install_deb pool/main/g/glib2.0/libglib2.0-0_2.58.3-2+deb10u2_armhf.deb
+install_deb pool/main/g/glib2.0/libglib2.0-dev_2.58.3-2+deb10u2_armhf.deb
+install_deb pool/main/g/gstreamer1.0/libgstreamer1.0-0_1.14.4-1_armhf.deb
+install_deb pool/main/g/gstreamer1.0/libgstreamer1.0-dev_1.14.4-1_armhf.deb
+install_deb pool/main/o/orc/liborc-0.4-0_0.4.28-3.1_armhf.deb
+install_deb pool/main/o/orc/liborc-0.4-dev_0.4.28-3.1_armhf.deb
+install_deb pool/main/g/gst-plugins-base1.0/libgstreamer-plugins-base1.0-0_1.14.4-2_armhf.deb
+install_deb pool/main/g/gst-plugins-base1.0/libgstreamer-plugins-base1.0-dev_1.14.4-2_armhf.deb
+install_deb pool/main/z/zlib/zlib1g_1.2.11.dfsg-1_armhf.deb
+install_deb pool/main/z/zlib/zlib1g-dev_1.2.11.dfsg-1_armhf.deb
+
+# Fix broken link
+ln -sf $SYSROOT/lib/$TARGET/libpcre.so.3 $SYSROOT/usr/lib/$TARGET/libpcre.so
+ln -sf $SYSROOT/lib/$TARGET/libz.so.1.2.11 $SYSROOT/usr/lib/$TARGET/libz.so

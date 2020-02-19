@@ -8,18 +8,23 @@ edition = "2018"
 name = "musicbox"
 
 [dependencies]
-rppal = "^0.11.3"
 futures = { version = "^0.3.4", features = ["compat"] }
-rpi-futures = { path = "../rpi-futures" }
-env_logger = "^0.6.2"
-tokio = { version = "^0.2.11", features = ["fs", "stream"] }
+tokio = { version = "^0.2.11", features = ["fs", "stream", "io-std"] }
 mp3-metadata = "^0.3.2"
-rodio = "^0.10.0"
 serde = { version = "^1.0.100", features = ["derive"] }
 serde_json = "^1.0.40"
 clap = { version = "^2.33.0", features = ["yaml"] }
 daemonize = "^0.4.1"
-log = "^0.4.8"
+log = { version = "^0.4.8", features = ["std", "serde"] }
 signal-hook = { version = "^0.1.13", features = ["tokio-support"] }
-cpal = "^0.10.0"
 minimp3 = "0.3.3"
+glib = "^0.9.3"
+gstreamer = "^0.15.2"
+gstreamer-audio = "^0.15.0"
+crossterm = { version = "^0.16.0", features = ["serde", "event-stream"] }
+time = "^0.2.6"
+
+[target.arm-unknown-linux-gnueabihf.dependencies]
+rppal = "^0.11.3"
+rpi-futures = { path = "../rpi-futures" }
+lazy_static = "^1.4.0"
