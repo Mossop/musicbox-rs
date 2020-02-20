@@ -1,3 +1,4 @@
+mod assets;
 mod error;
 mod events;
 mod hardware;

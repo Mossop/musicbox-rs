@@ -7,7 +7,7 @@ use serde::Deserialize;
 use tokio::fs::{create_dir_all, metadata, read_dir};
 
 use crate::error::{MusicResult, VoidResult};
-#[cfg(target_arch = "arm")]
+#[cfg(feature = "rpi")]
 use crate::hardware::gpio::led::{LEDConfig, LED};
 use crate::track::Track;
 
@@ -16,7 +16,7 @@ use crate::track::Track;
 pub struct PlaylistConfig {
     pub name: String,
     pub title: String,
-    #[cfg(target_arch = "arm")]
+    #[cfg(feature = "rpi")]
     pub led: LEDConfig,
 }
 
@@ -24,7 +24,7 @@ pub struct StoredPlaylist {
     root: PathBuf,
     name: String,
     tracks: Vec<Track>,
-    #[cfg(target_arch = "arm")]
+    #[cfg(feature = "rpi")]
     pub led: LED,
 }
 
@@ -75,7 +75,7 @@ impl StoredPlaylist {
             root,
             name: config.name.clone(),
             tracks: Vec::new(),
-            #[cfg(target_arch = "arm")]
+            #[cfg(feature = "rpi")]
             led: LED::new(&config.led)?,
         };
         playlist.rescan().await?;
@@ -117,11 +117,11 @@ impl StoredPlaylist {
 
         if self.tracks.is_empty() {
             info!("{} playlist has no tracks.", self.name);
-            #[cfg(target_arch = "arm")]
+            #[cfg(feature = "rpi")]
             self.led.off();
         } else {
             info!("{} playlist has {} tracks.", self.name, self.tracks.len());
-            #[cfg(target_arch = "arm")]
+            #[cfg(feature = "rpi")]
             self.led.on();
         }
 

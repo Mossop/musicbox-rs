@@ -1,7 +1,5 @@
 use std::collections::HashMap;
-use std::fs::File;
-use std::io::BufReader;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::id;
 use std::time::Duration;
 
@@ -13,13 +11,12 @@ use futures::future::{join_all, poll_fn, ready, TryFutureExt};
 use futures::select;
 use futures::stream::{Stream, StreamExt};
 use log::{error, info, trace};
-use serde_json::from_reader;
 use signal_hook::iterator::Signals;
 use tokio::runtime::Runtime;
 
 use crate::error::{ErrorExt, MusicResult, VoidResult};
 use crate::events::{Command, Event, Message, MessageStream};
-#[cfg(target_arch = "arm")]
+#[cfg(feature = "rpi")]
 use crate::hardware::gpio::button::Buttons;
 use crate::hardware::keyboard::Keyboard;
 use crate::hw_config::HwConfig;
@@ -28,7 +25,6 @@ use crate::playlist::StoredPlaylist;
 use crate::term_logger::TermLogger;
 use crate::track::Track;
 
-const HW_CONFIG_NAME: &str = "hwconfig.json";
 const VOLUME_INTERVAL: f64 = 0.1;
 
 pub struct PlayState {
@@ -251,19 +247,7 @@ impl MusicBox {
     // Should perform any privileged actions before the daemon reduces
     // privileges.
     async fn init(data_dir: &Path, has_console: bool) -> MusicResult<MusicBox> {
-        let mut hw_config_file = data_dir.to_owned();
-        hw_config_file.push(HW_CONFIG_NAME.parse::<PathBuf>().unwrap());
-
-        let file = File::open(&hw_config_file)
-            .map_err(|_| format!("Could not open config file '{}'.", hw_config_file.display()))?;
-
-        let hw_config: HwConfig = from_reader(BufReader::new(file)).map_err(|e| {
-            format!(
-                "Unable to parse config file '{}': {}",
-                hw_config_file.display(),
-                e
-            )
-        })?;
+        let hw_config = HwConfig::load()?;
 
         let mut music_box: MusicBox = MusicBox::new(0.5)?;
         let playlists = StoredPlaylist::init(data_dir, hw_config.playlists).await?;
@@ -271,7 +255,7 @@ impl MusicBox {
             music_box.stored_playlists.insert(playlist.name(), playlist);
         }
 
-        #[cfg(target_arch = "arm")]
+        #[cfg(feature = "rpi")]
         Buttons::init(&mut music_box, &hw_config.buttons)?;
 
         if has_console {

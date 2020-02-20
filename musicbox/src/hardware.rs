@@ -1,4 +1,4 @@
 pub mod keyboard;
 
-#[cfg(target_arch = "arm")]
+#[cfg(feature = "rpi")]
 pub mod gpio;

@@ -1,5 +1,12 @@
 #! /bin/sh
 
-cargo build --release --target arm-unknown-linux-gnueabihf && \
-rsync target/arm-unknown-linux-gnueabihf/release/musicbox musicbox: && \
-scp hw_configs/pi-zero-w.json musicbox:data/hwconfig.json
+set -e
+cd rpi-futures
+cargo build --release --target arm-unknown-linux-gnueabihf
+cd ..
+
+cd musicbox
+cargo build --release --features rpi --target arm-unknown-linux-gnueabihf
+cd ..
+
+rsync target/arm-unknown-linux-gnueabihf/release/musicbox musicbox:
