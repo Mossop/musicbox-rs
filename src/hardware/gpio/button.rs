@@ -1,7 +1,7 @@
 use futures::future::ready;
 use futures::stream::{Stream, StreamExt};
 use log::{debug, error};
-use rpi_futures::gpio::{ButtonEvent, InputPinEvents};
+use rpi_async::gpio::{ButtonEvent, InputPinEvents};
 use rppal::gpio::{Level, PullUpDown};
 use serde::Deserialize;
 

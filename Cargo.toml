@@ -1,5 +1,32 @@
-[workspace]
-members = [
-    "musicbox",
-    "rpi-futures",
-]
+[package]
+name = "musicbox"
+version = "0.1.0"
+authors = ["Dave Townsend <dtownsend@oxymoronical.com>"]
+edition = "2018"
+
+[[bin]]
+name = "musicbox"
+
+[features]
+default = []
+rpi = ["rppal", "rpi-async", "lazy_static"]
+
+[dependencies]
+futures = { version = "^0.3.4", features = ["compat"] }
+tokio = { version = "^0.2.11", features = ["fs", "stream", "io-std"] }
+serde = { version = "^1.0.100", features = ["derive"] }
+serde_json = "^1.0.40"
+clap = { version = "^2.33.0", features = ["yaml"] }
+daemonize = "^0.4.1"
+log = { version = "^0.4.8", features = ["std", "serde"] }
+signal-hook = { version = "^0.1.13", features = ["tokio-support"] }
+glib = "^0.9.3"
+gstreamer = "^0.15.2"
+gstreamer-audio = "^0.15.0"
+crossterm = { version = "^0.16.0", features = ["serde", "event-stream"] }
+time = "^0.2.6"
+rust-embed = { version = "^5.2.0", features = ["debug-embed"] }
+
+rppal = { version = "^0.11.3", optional = true }
+rpi-async = { version = "^0.1.0", optional = true }
+lazy_static = { version = "^1.4.0", optional = true }

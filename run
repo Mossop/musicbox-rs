@@ -1,4 +1,4 @@
 #! /bin/sh
 
 set -e
-cargo run -p musicbox -- --data-dir data
+cargo run -- --data-dir data

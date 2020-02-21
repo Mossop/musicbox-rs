@@ -1,12 +1,5 @@
 #! /bin/sh
 
 set -e
-cd rpi-futures
-cargo build --release --target arm-unknown-linux-gnueabihf
-cd ..
-
-cd musicbox
 cargo build --release --features rpi --target arm-unknown-linux-gnueabihf
-cd ..
-
 rsync target/arm-unknown-linux-gnueabihf/release/musicbox musicbox:
