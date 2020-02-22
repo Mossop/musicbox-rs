@@ -19,7 +19,7 @@ pub struct HwConfig {
 impl HwConfig {
     pub fn load() -> MusicResult<HwConfig> {
         Config::get("hw_config.json")
-            .ok_or(String::from("Could not load hardware config."))
+            .ok_or_else(|| String::from("Could not load hardware config."))
             .and_then(|slice| from_slice(&slice).prefix("Failed to parse hardware config"))
     }
 }
