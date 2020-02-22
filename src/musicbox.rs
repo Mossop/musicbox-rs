@@ -12,6 +12,7 @@ use futures::select;
 use futures::stream::{Stream, StreamExt};
 use log::{error, info, trace};
 use signal_hook::iterator::Signals;
+use tokio::net::TcpListener;
 use tokio::runtime::Runtime;
 
 use crate::error::{ErrorExt, MusicResult, VoidResult};
@@ -22,6 +23,7 @@ use crate::hardware::keyboard::Keyboard;
 use crate::hw_config::HwConfig;
 use crate::player::Player;
 use crate::playlist::StoredPlaylist;
+use crate::server::serve;
 use crate::term_logger::TermLogger;
 use crate::track::Track;
 
@@ -34,6 +36,7 @@ pub struct PlayState {
 }
 
 pub struct MusicBox {
+    server: Option<TcpListener>,
     events: MessageStream<Event>,
     commands: MessageStream<Command>,
     stored_playlists: HashMap<String, StoredPlaylist>,
@@ -45,24 +48,6 @@ pub struct MusicBox {
 }
 
 impl MusicBox {
-    pub fn new(volume: f64) -> MusicResult<MusicBox> {
-        let (player, playback_events) = Player::new(volume)?;
-
-        let mut music_box = MusicBox {
-            volume,
-            player,
-            events: Default::default(),
-            commands: Default::default(),
-            stored_playlists: Default::default(),
-            event_listeners: Default::default(),
-            playlist: Default::default(),
-            play_state: Default::default(),
-        };
-
-        music_box.add_event_stream(playback_events);
-        Ok(music_box)
-    }
-
     pub fn add_event_stream<S>(&mut self, stream: S)
     where
         S: Stream<Item = Message<Event>> + 'static,
@@ -226,6 +211,10 @@ impl MusicBox {
     async fn run(mut self) -> VoidResult {
         info!("Music box startup. Running as process {}.", id());
 
+        if let Some(listener) = self.server.take() {
+            serve(listener);
+        }
+
         loop {
             select! {
                 c = self.commands.next() => if let Some(command) = c {
@@ -249,7 +238,26 @@ impl MusicBox {
     async fn init(data_dir: &Path, has_console: bool) -> MusicResult<MusicBox> {
         let hw_config = HwConfig::load()?;
 
-        let mut music_box: MusicBox = MusicBox::new(0.5)?;
+        let (player, playback_events) = Player::new(0.5)?;
+
+        let mut music_box = MusicBox {
+            server: Some(
+                TcpListener::bind(hw_config.server)
+                    .await
+                    .prefix("Unable to bind to server socket")?,
+            ),
+            volume: 0.5,
+            player,
+            events: Default::default(),
+            commands: Default::default(),
+            stored_playlists: Default::default(),
+            event_listeners: Default::default(),
+            playlist: Default::default(),
+            play_state: Default::default(),
+        };
+
+        music_box.add_event_stream(playback_events);
+
         let playlists = StoredPlaylist::init(data_dir, hw_config.playlists).await?;
         for playlist in playlists {
             music_box.stored_playlists.insert(playlist.name(), playlist);

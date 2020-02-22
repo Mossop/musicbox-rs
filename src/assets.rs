@@ -9,3 +9,7 @@ pub struct Config;
 #[derive(RustEmbed)]
 #[folder = "config/rpi"]
 pub struct Config;
+
+#[derive(RustEmbed)]
+#[folder = "target/webapp"]
+pub struct Webapp;

@@ -1,3 +1,5 @@
+use std::net::SocketAddr;
+
 use serde::Deserialize;
 use serde_json::from_slice;
 
@@ -7,6 +9,7 @@ use crate::error::{ErrorExt, MusicResult};
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HwConfig {
+    pub server: SocketAddr,
     pub keyboard: Vec<crate::hardware::keyboard::KeyConfig>,
     #[cfg(feature = "rpi")]
     pub buttons: Vec<crate::hardware::gpio::button::ButtonConfig>,
