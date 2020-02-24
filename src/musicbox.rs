@@ -1,7 +1,5 @@
-use std::collections::HashMap;
 use std::path::Path;
 use std::process::id;
-use std::time::Duration;
 
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use daemonize::{Daemonize, DaemonizeError};
@@ -15,6 +13,7 @@ use signal_hook::iterator::Signals;
 use tokio::net::TcpListener;
 use tokio::runtime::Runtime;
 
+use crate::appstate::MutableAppState;
 use crate::error::{ErrorExt, MusicResult, VoidResult};
 use crate::events::{Command, Event, Message, MessageStream};
 #[cfg(feature = "rpi")]
@@ -25,26 +24,16 @@ use crate::player::Player;
 use crate::playlist::StoredPlaylist;
 use crate::server::serve;
 use crate::term_logger::TermLogger;
-use crate::track::Track;
 
 const VOLUME_INTERVAL: f64 = 0.1;
-
-pub struct PlayState {
-    position: usize,
-    duration: Duration,
-    paused: bool,
-}
 
 pub struct MusicBox {
     server: Option<TcpListener>,
     events: MessageStream<Event>,
     commands: MessageStream<Command>,
-    stored_playlists: HashMap<String, StoredPlaylist>,
     event_listeners: Vec<Sender<Message<Event>>>,
-    playlist: Vec<Track>,
-    play_state: Option<PlayState>,
     player: Player,
-    volume: f64,
+    state: MutableAppState,
 }
 
 impl MusicBox {
@@ -63,17 +52,13 @@ impl MusicBox {
     }
 
     async fn play(&mut self, position: usize) {
-        if let Some(track) = self.playlist.get(position) {
+        if let Some(track) = self.state.playlist().get(position) {
             self.player.start(&track.path()).log().drop();
-            self.play_state = Some(PlayState {
-                position,
-                duration: Duration::from_secs(0),
-                paused: false,
-            });
+            self.state.set_playback_position(Some(position))
         } else {
-            self.play_state = None;
+            self.state.set_playback_position(None);
             self.player.stop().log().drop();
-            self.playlist.clear();
+            self.state.set_playlist(Default::default());
             self.dispatch_event(Event::PlaylistUpdated.into()).await;
         }
     }
@@ -102,64 +87,69 @@ impl MusicBox {
 
         match command.payload {
             Command::PreviousTrack => {
-                let position = match self.play_state {
-                    Some(ref state) => {
-                        if state.position > 0 && state.duration.as_secs() < 2 {
-                            state.position - 1
+                let position = match (
+                    self.state.playback_position(),
+                    self.state.playback_duration(),
+                ) {
+                    (Some(position), Some(duration)) => {
+                        if position > 0 && duration.as_secs() < 2 {
+                            position - 1
                         } else {
-                            state.position
+                            position
                         }
                     }
-                    None => return,
+                    _ => return,
                 };
                 self.play(position).await;
             }
             Command::NextTrack => {
-                let position = match self.play_state {
-                    Some(ref state) => state.position + 1,
+                let position = match self.state.playback_position() {
+                    Some(position) => position + 1,
                     None => return,
                 };
                 self.play(position).await;
             }
             Command::PlayPause => {
-                if let Some(ref mut state) = self.play_state {
-                    if state.paused {
+                if let Some(paused) = self.state.paused() {
+                    if paused {
                         trace!("Play");
                         self.player.play().log().drop();
                     } else {
                         trace!("Pause");
                         self.player.pause().log().drop();
                     }
-                } else if !self.playlist.is_empty() {
+                } else {
                     self.play(0).await;
                 }
             }
             Command::VolumeUp => {
-                self.volume += VOLUME_INTERVAL;
-                if self.volume > 1.0 {
-                    self.volume = 1.0;
+                let mut volume = self.state.volume() + VOLUME_INTERVAL;
+                if volume > 1.0 {
+                    volume = 1.0;
                 }
-                self.player.set_volume(self.volume);
+                self.state.set_volume(volume);
+                self.player.set_volume(volume);
             }
             Command::VolumeDown => {
-                self.volume -= VOLUME_INTERVAL;
-                if self.volume < 0.0 {
-                    self.volume = 0.0;
+                let mut volume = self.state.volume() - VOLUME_INTERVAL;
+                if volume < 0.0 {
+                    volume = 0.0;
                 }
-                self.player.set_volume(self.volume);
+                self.state.set_volume(volume);
+                self.player.set_volume(volume);
             }
             Command::Shutdown => {
                 info!("Music box clean shutdown.");
                 self.player.stop().log().drop();
                 self.dispatch_event(Event::Shutdown.into()).await;
             }
-            Command::StartPlaylist(name, force) => {
-                if let Some(playlist) = self.stored_playlists.get(&name) {
-                    if playlist.equals(&self.playlist) && !force {
-                        return;
-                    }
+            Command::StartPlaylist(name, _) => {
+                if self.state.is_playing_playlist(&name) {
+                    return;
+                }
 
-                    self.playlist = playlist.tracks();
+                if let Some(playlist) = self.state.stored_playlist(&name) {
+                    self.state.set_playlist(playlist.tracks());
                     self.dispatch_event(Event::PlaylistUpdated.into()).await;
                     self.play(0).await;
                 } else {
@@ -182,17 +172,13 @@ impl MusicBox {
 
         match event.payload {
             Event::PlaybackPaused => {
-                if let Some(ref mut state) = self.play_state {
-                    state.paused = true;
-                }
+                self.state.set_paused(true);
             }
             Event::PlaybackUnpaused => {
-                if let Some(ref mut state) = self.play_state {
-                    state.paused = false;
-                }
+                self.state.set_paused(false);
             }
             Event::PlaybackEnded => {
-                if let Some(pos) = self.play_state.as_ref().map(|state| state.position) {
+                if let Some(pos) = self.state.playback_position() {
                     self.play(pos + 1).await;
                 }
             }
@@ -212,7 +198,7 @@ impl MusicBox {
         info!("Music box startup. Running as process {}.", id());
 
         if let Some(listener) = self.server.take() {
-            serve(listener);
+            serve(listener, self.state.as_immutable());
         }
 
         loop {
@@ -238,6 +224,9 @@ impl MusicBox {
     async fn init(data_dir: &Path, has_console: bool) -> MusicResult<MusicBox> {
         let hw_config = HwConfig::load()?;
 
+        let app_state =
+            MutableAppState::new(StoredPlaylist::init(data_dir, hw_config.playlists).await?);
+
         let (player, playback_events) = Player::new(0.5)?;
 
         let mut music_box = MusicBox {
@@ -246,22 +235,14 @@ impl MusicBox {
                     .await
                     .prefix("Unable to bind to server socket")?,
             ),
-            volume: 0.5,
             player,
             events: Default::default(),
             commands: Default::default(),
-            stored_playlists: Default::default(),
             event_listeners: Default::default(),
-            playlist: Default::default(),
-            play_state: Default::default(),
+            state: app_state,
         };
 
         music_box.add_event_stream(playback_events);
-
-        let playlists = StoredPlaylist::init(data_dir, hw_config.playlists).await?;
-        for playlist in playlists {
-            music_box.stored_playlists.insert(playlist.name(), playlist);
-        }
 
         #[cfg(feature = "rpi")]
         Buttons::init(&mut music_box, &hw_config.buttons)?;

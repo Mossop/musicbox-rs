@@ -6,9 +6,10 @@ use futures::stream::Stream;
 use log::info;
 use tokio::net::{TcpListener, TcpStream};
 use warp::reject::{not_found, Rejection};
-use warp::reply::with_header;
+use warp::reply::{json, with_header};
 use warp::{path::FullPath, Filter, Reply};
 
+use crate::appstate::AppState;
 use crate::assets::Webapp;
 
 struct Incoming {
@@ -55,9 +56,34 @@ async fn static_content(path: FullPath) -> Result<impl Reply, Rejection> {
     Ok(with_header(data, "content-type", content_type))
 }
 
-pub fn serve(listener: TcpListener) {
-    let routes = warp::path::full().and_then(static_content);
-    let server = warp::serve(routes.with(warp::log("musicbox::server")));
+fn static_content_route() -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone {
+    warp::path::full().and_then(static_content)
+}
+
+async fn state(app_state: AppState) -> Result<impl Reply, Rejection> {
+    Ok(json(&app_state))
+}
+
+fn state_route(
+    app_state: AppState,
+) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone {
+    warp::path("state")
+        .and(warp::path::end())
+        .and_then(move || state(app_state.clone()))
+}
+
+fn api_routes(
+    api_state: &AppState,
+) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone {
+    warp::path("api").and(state_route(api_state.clone()))
+}
+
+pub fn serve(listener: TcpListener, api_state: AppState) {
+    let server = warp::serve(
+        api_routes(&api_state)
+            .or(static_content_route())
+            .with(warp::log("musicbox::server")),
+    );
 
     if let Ok(addr) = listener.local_addr() {
         info!("Starting webserver, listening on {}.", addr);

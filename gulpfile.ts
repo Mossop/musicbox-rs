@@ -1,7 +1,7 @@
 /* eslint-env node */
 import path from "path";
 
-import { src, dest, parallel, watch } from "gulp";
+import { src, dest, parallel, series, watch as watchFiles } from "gulp";
 import gulpSass from "gulp-sass";
 import named from "vinyl-named";
 import { Configuration } from "webpack";
@@ -59,12 +59,12 @@ export function buildJs(): NodeJS.ReadWriteStream {
 
 export function buildCss(): NodeJS.ReadWriteStream {
   return src([source("css", "app.scss")])
-    .pipe(gulpSass().on("error", gulpSass.logError))
+    .pipe(gulpSass().on("error", (e: string) => gulpSass.logError(e)))
     .pipe(dest(target("css")));
 }
 
 export function watchCss(): void {
-  watch([source("css", "**", "*.scss")], buildCss);
+  watchFiles([source("css", "**", "*.scss")], buildCss);
 }
 
 export function buildStatic(): NodeJS.ReadWriteStream {
@@ -73,10 +73,10 @@ export function buildStatic(): NodeJS.ReadWriteStream {
 }
 
 export function watchStatic(): void {
-  watch([source("**", "*")], buildStatic);
+  watchFiles([source("**", "*")], buildStatic);
 }
 
 export const build = parallel(buildJs, buildCss, buildStatic);
-export const watchBuild = parallel(watchJs, watchCss);
+export const watch = parallel(watchJs, series(buildCss, watchCss), series(buildStatic, watchStatic));
 
 export default build;

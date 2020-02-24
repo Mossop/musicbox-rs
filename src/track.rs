@@ -1,10 +1,23 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
+use serde::{Serialize, Serializer};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+fn serialize_file_name<S>(path: &Path, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    path.file_name()
+        .unwrap()
+        .to_os_string()
+        .into_string()
+        .unwrap()
+        .serialize(serializer)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Track {
+    #[serde(serialize_with = "serialize_file_name")]
     path: PathBuf,
     title: String,
 }

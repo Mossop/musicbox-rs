@@ -2,7 +2,7 @@
   "compilerOptions": {
     "module": "commonjs",
     "target": "ESNext",
-    "jsx": "preserve",
+    "jsx": "react",
     "allowJs": true,
     "checkJs": true,
     "esModuleInterop": true,

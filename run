@@ -1,4 +1,3 @@
 #! /bin/sh
 
-set -e
 cargo run -- --data-dir data

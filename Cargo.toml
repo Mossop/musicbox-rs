@@ -15,7 +15,7 @@ rpi = ["rppal", "rpi-async", "lazy_static"]
 futures = { version = "^0.3.4", features = ["compat"] }
 tokio = { version = "^0.2.11", features = ["full"] }
 serde = { version = "^1.0.100", features = ["derive"] }
-serde_json = "^1.0.40"
+serde_json = "^1.0.48"
 clap = { version = "^2.33.0", features = ["yaml"] }
 daemonize = "^0.4.1"
 log = { version = "^0.4.8", features = ["std", "serde"] }
@@ -25,7 +25,7 @@ gstreamer = "^0.15.2"
 gstreamer-audio = "^0.15.0"
 crossterm = { version = "^0.16.0", features = ["serde", "event-stream"] }
 time = "^0.2.6"
-rust-embed = { version = "^5.2.0", features = ["debug-embed"] }
+rust-embed = { version = "^5.2.0" }
 warp = "^0.2.1"
 
 rppal = { version = "^0.11.3", optional = true }

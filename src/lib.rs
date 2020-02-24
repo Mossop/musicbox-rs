@@ -1,3 +1,4 @@
+mod appstate;
 mod assets;
 mod error;
 mod events;

@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use futures::stream::StreamExt;
 use log::{debug, error, info};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tokio::fs::{create_dir_all, metadata, read_dir};
 
 use crate::error::{MusicResult, VoidResult};
@@ -17,10 +17,13 @@ pub struct PlaylistConfig {
     pub name: String,
     pub title: String,
     #[cfg(feature = "rpi")]
+    #[serde(skip)]
     pub led: LEDConfig,
 }
 
+#[derive(Debug, Clone, Serialize)]
 pub struct StoredPlaylist {
+    #[serde(skip)]
     root: PathBuf,
     name: String,
     tracks: Vec<Track>,
