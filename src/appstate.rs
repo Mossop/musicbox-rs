@@ -15,6 +15,7 @@ pub struct PlayState {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct InnerState {
     stored_playlists: HashMap<String, StoredPlaylist>,
     playlist: Vec<Track>,

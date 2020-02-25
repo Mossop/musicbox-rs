@@ -1,14 +1,5 @@
-import { StoredPlaylist, Track } from "./musicbox";
+import { AppState } from "./musicbox";
 
-export interface PlaybackState {
-  track: Track;
-  position: number;
-  duration: number;
-  paused: boolean;
-}
-
-export interface AppState {
-  playbackState: PlaybackState | null;
-  storedPlaylists: Map<string, StoredPlaylist>;
-  playlist: Track[];
+export interface WebAppState {
+  appState: AppState;
 }

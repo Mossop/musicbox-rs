@@ -1,30 +1,22 @@
-import { produce, Immutable } from "immer";
-import { Store, Middleware, createStore, applyMiddleware } from "redux";
+import { Immutable } from "immer";
+import { Store, Middleware, applyMiddleware } from "redux";
 import { createLogger } from "redux-logger";
 
-import { AppState } from "../types/store";
-import { BaseAction } from "./actions";
-import reducers from "./reducer";
+import { fetchState } from "../api";
+import { WebAppState } from "../types/store";
+import { BaseAction, createStore } from "./helpers";
+import reducer from "./reducer";
 
-function buildStore(): Store<Immutable<AppState>, BaseAction> {
+async function buildStore(): Promise<Store<Immutable<WebAppState>, BaseAction>> {
+  let appState = await fetchState();
+
   const middlewares: Middleware[] = [];
 
   if (process.env.NODE_ENV === "development") {
     middlewares.push(createLogger());
   }
 
-  return createStore(
-    (state: Immutable<AppState>, action: BaseAction): Immutable<AppState> => {
-      return produce(state, (draft: AppState) => {
-        // @ts-ignore
-        reducers[action.type](draft, action.payload);
-      });
-    },
-    {
-      playlist: [],
-      playbackState: null,
-      storedPlaylists: new Map(),
-    },
+  return createStore(reducer, { appState, },
     applyMiddleware(...middlewares),
   );
 

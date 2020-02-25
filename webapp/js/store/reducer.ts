@@ -1,11 +1,6 @@
-import { StoredPlaylist } from "../types/musicbox";
-import { AppState } from "../types/store";
-import { ReducerMap } from "./actions";
+import { WebAppState } from "../types/store";
+import actions from "./actions";
+import { reducer } from "./helpers";
 
-const reducer: ReducerMap = {
-  UpdateStoredPlaylist(state: AppState, payload: StoredPlaylist): void {
-    state.storedPlaylists.set(payload.name, payload);
-  },
-};
-
-export default reducer;
+export default reducer<typeof actions, WebAppState>({
+});
