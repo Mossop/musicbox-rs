@@ -1,63 +1,80 @@
 import { produce, Immutable } from "immer";
-import { Store, createStore as createReduxStore, PreloadedState, StoreEnhancer } from "redux";
+import { PreloadedState, StoreEnhancer, Store, createStore as createReduxStore } from "redux";
 
-export interface BaseAction {
-  type: string;
+type Mapped<I> = {
+  [key in keyof I]: unknown;
+};
+type Mapper<I, O extends Mapped<I>> = <K extends keyof I>(value: I[K], property: K) => O[K];
+function objectMap<I, O extends Mapped<I>>(input: I, mapper: Mapper<I, O>): O {
+  let output = {} as O;
+  for (let [key, value] of Object.entries(input)) {
+    output[key] = mapper(value, key as keyof I);
+  }
+  return output;
+}
+
+/**
+ * Generic types:
+ *   S: Store state.
+ *   U: Updated store state.
+ *   M: Reducer map.
+ *   R: Reducer.
+ *   T: Type.
+ */
+
+// Simple reducer for a payload.
+type Reducer<P, S = unknown, U = S> = (state: S, payload: P) => U;
+
+type ReducerMap<S, U = S> = {
+  [type: string]: (state: S, payload: unknown) => U;
+};
+
+// Derive the payload type from a reducer function.
+type ReducerPayload<R> = R extends Reducer<infer P> ? P : never;
+
+// A map from string type names to payload types.
+type PayloadFor<M, T extends keyof M> = ReducerPayload<M[T]>;
+
+// Basic action with known types.
+export interface ReducerAction<M> {
+  type: keyof M;
   payload: unknown;
 }
 
-interface AppAction<P> extends BaseAction {
-  type: string;
-  payload: P;
+export type TypedStore<S, M extends ReducerMap<S, unknown>> = Store<S, ReducerAction<M>>;
+
+// Fully typed action.
+interface TypedAction<M, T extends keyof M> extends ReducerAction<M> {
+  type: T;
+  payload: PayloadFor<M, T>;
 }
 
-type ActionMarker<P> = (type: string, payload: P) => AppAction<P>;
-
-export function action<P>(): ActionMarker<P> {
-  return (type: string, payload: P): AppAction<P> => ({ type, payload, });
-}
-
-type Reducer<S, P> = (store: S, payload: P) => void;
-type ActionBuilder<P> = (payload: P) => AppAction<P>;
-type BuilderFromMarker<T> = T extends ActionMarker<infer P> ? ActionBuilder<P> : never;
-type ReducerFromMarker<S, T> = T extends ActionMarker<infer P> ? Reducer<S, P> : never;
-
-type ActionBuilderMap<M extends object> = {
-  [k in keyof M]: BuilderFromMarker<M[k]>;
+type ActionCreators<M> = {
+  [type in keyof M]: (payload: PayloadFor<M, type>) => TypedAction<M, type>;
 };
 
-type ReducerMap<S, M> = {
-  [k in keyof M]: ReducerFromMarker<S, M[k]>;
-};
-
-type TopLevelReducer<S> = Reducer<S, BaseAction>;
-
-export function actions<M extends object>(map: M): ActionBuilderMap<M> {
-  let result = {};
-
-  for (let [type] of Object.values(map)) {
-    result[type] = <P>(payload: P): AppAction<P> => ({
-      type, payload,
-    });
-  }
-
-  return result as ActionBuilderMap<M>;
-}
-
-export function reducer<M extends object, S = {}>(reducers: ReducerMap<S, M>): TopLevelReducer<S> {
-  return (state: S, action: BaseAction): void => {
-    if (action.type in reducers) {
-      reducers[action.type](state, action.payload);
+export function reducer<S, M extends ReducerMap<S, S>>(reducerMap: M): Reducer<ReducerAction<M>, S, S> {
+  return (state: S, action: ReducerAction<M>): S => {
+    if (action.type in reducerMap) {
+      return reducerMap[action.type](state, action.payload);
     }
+    return state;
   };
 }
 
-export function createStore<S, Ext = {}, StateExt = never>(reducer: TopLevelReducer<S>, initialState: PreloadedState<Immutable<S>>, enhancer?: StoreEnhancer<Ext, StateExt>): Store<Immutable<S>, BaseAction> {
-  return createReduxStore(
-    (state: Immutable<S>, action: BaseAction): Immutable<S> => {
-      return produce(state, (draft: S) => reducer(draft, action));
-    },
-    initialState,
-    enhancer
-  );
+export function immutableReducer<S, M extends ReducerMap<S, void>>(reducerMap: M): Reducer<ReducerAction<M>, Immutable<S>, Immutable<S>> {
+  return (state: Immutable<S>, action: ReducerAction<M>): Immutable<S> => {
+    if (action.type in reducerMap) {
+      return produce(state, (draft: S) => reducerMap[action.type](draft, action.payload));
+    }
+    return state;
+  };
+}
+
+export function actions<S, M extends ReducerMap<S, unknown>>(reducerMap: M): ActionCreators<M> {
+  const creator = <T extends keyof M>(_reducer: unknown, type: T): ((payload: PayloadFor<M, T>) => TypedAction<M, T>) => {
+    return (payload: PayloadFor<M, T>): TypedAction<M, T> => ({ type, payload, });
+  };
+
+  return objectMap(reducerMap, creator);
 }

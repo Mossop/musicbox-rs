@@ -1,13 +1,13 @@
 import { Immutable } from "immer";
-import { Store, Middleware, applyMiddleware } from "redux";
+import { Middleware, applyMiddleware, createStore } from "redux";
 import { createLogger } from "redux-logger";
 
 import { fetchState } from "../api";
 import { WebAppState } from "../types/store";
-import { BaseAction, createStore } from "./helpers";
+import { immutableReducer, TypedStore } from "./helpers";
 import reducer from "./reducer";
 
-async function buildStore(): Promise<Store<Immutable<WebAppState>, BaseAction>> {
+async function buildStore(): Promise<TypedStore<Immutable<WebAppState>, typeof reducer>> {
   let appState = await fetchState();
 
   const middlewares: Middleware[] = [];
@@ -16,7 +16,7 @@ async function buildStore(): Promise<Store<Immutable<WebAppState>, BaseAction>> 
     middlewares.push(createLogger());
   }
 
-  return createStore(reducer, { appState, },
+  return createStore(immutableReducer<Immutable<WebAppState>, typeof reducer>(reducer), { appState, },
     applyMiddleware(...middlewares),
   );
 
