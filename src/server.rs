@@ -11,6 +11,14 @@ use warp::{path::FullPath, Filter, Reply};
 
 use crate::appstate::AppState;
 use crate::assets::Webapp;
+use crate::events::{Command, Event, MessageReceiver, MessageSender};
+
+#[derive(Clone)]
+pub struct ClientInfo {
+    pub app_state: AppState,
+    pub command_sender: MessageSender<Command>,
+    pub event_receiver: MessageReceiver<Event>,
+}
 
 struct Incoming {
     listener: TcpListener,
@@ -60,27 +68,27 @@ fn static_content_route() -> impl Filter<Extract = (impl Reply,), Error = Reject
     warp::path::full().and_then(static_content)
 }
 
-async fn state(app_state: AppState) -> Result<impl Reply, Rejection> {
-    Ok(json(&app_state))
+async fn state(info: ClientInfo) -> Result<impl Reply, Rejection> {
+    Ok(json(&info.app_state))
 }
 
 fn state_route(
-    app_state: AppState,
+    info: ClientInfo,
 ) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone {
     warp::path("state")
         .and(warp::path::end())
-        .and_then(move || state(app_state.clone()))
+        .and_then(move || state(info.clone()))
 }
 
 fn api_routes(
-    api_state: &AppState,
+    info: &ClientInfo,
 ) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone {
-    warp::path("api").and(state_route(api_state.clone()))
+    warp::path("api").and(state_route(info.clone()))
 }
 
-pub fn serve(listener: TcpListener, api_state: AppState) {
+pub fn serve(listener: TcpListener, info: ClientInfo) {
     let server = warp::serve(
-        api_routes(&api_state)
+        api_routes(&info)
             .or(static_content_route())
             .with(warp::log("musicbox::server")),
     );

@@ -3,9 +3,8 @@ use std::process::id;
 
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use daemonize::{Daemonize, DaemonizeError};
-use futures::channel::mpsc::{channel, Sender};
 use futures::compat::*;
-use futures::future::{join_all, poll_fn, ready, TryFutureExt};
+use futures::future::{ready, TryFutureExt};
 use futures::select;
 use futures::stream::{Stream, StreamExt};
 use log::{error, info, trace};
@@ -15,40 +14,37 @@ use tokio::runtime::Runtime;
 
 use crate::appstate::MutableAppState;
 use crate::error::{ErrorExt, MusicResult, VoidResult};
-use crate::events::{Command, Event, Message, MessageStream};
+use crate::events::{Command, Event, Message, MessageReceiver, MessageSender};
 #[cfg(feature = "rpi")]
 use crate::hardware::gpio::button::Buttons;
 use crate::hardware::keyboard::Keyboard;
 use crate::hw_config::HwConfig;
 use crate::player::Player;
 use crate::playlist::StoredPlaylist;
-use crate::server::serve;
+use crate::server::{serve, ClientInfo};
 use crate::term_logger::TermLogger;
 
 const VOLUME_INTERVAL: f64 = 0.1;
 
 pub struct MusicBox {
     server: Option<TcpListener>,
-    events: MessageStream<Event>,
-    commands: MessageStream<Command>,
-    event_listeners: Vec<Sender<Message<Event>>>,
+    events: MessageReceiver<Event>,
+    commands: MessageReceiver<Command>,
+    event_listeners: MessageSender<Event>,
     player: Player,
     state: MutableAppState,
 }
 
 impl MusicBox {
-    pub fn add_event_stream<S>(&mut self, stream: S)
-    where
-        S: Stream<Item = Message<Event>> + 'static,
-    {
-        self.events.add_stream(stream)
-    }
-
-    pub fn add_command_stream<S>(&mut self, stream: S)
+    pub fn add_command_stream<S: Send>(&mut self, stream: S)
     where
         S: Stream<Item = Message<Command>> + 'static,
     {
-        self.commands.add_stream(stream)
+        tokio::spawn(
+            stream
+                .map(|message| Ok(message))
+                .forward(self.commands.sender()),
+        );
     }
 
     async fn play(&mut self, position: usize) {
@@ -59,27 +55,12 @@ impl MusicBox {
             self.state.set_playback_position(None);
             self.player.stop().log().drop();
             self.state.set_playlist(Default::default());
-            self.dispatch_event(Event::PlaylistUpdated.into()).await;
+            self.dispatch_event(Event::PlaylistUpdated.into());
         }
     }
 
-    async fn send_event(sender: &mut Sender<Message<Event>>, event: Message<Event>) {
-        let ready = poll_fn(|cx| sender.poll_ready(cx));
-        if let Err(_e) = ready.await {
-            return;
-        }
-        if let Err(_e) = sender.start_send(event) {
-            return;
-        }
-    }
-
-    async fn dispatch_event(&mut self, event: Message<Event>) {
-        join_all(
-            self.event_listeners
-                .iter_mut()
-                .map(|sender| MusicBox::send_event(sender, event.clone())),
-        )
-        .await;
+    fn dispatch_event(&mut self, event: Message<Event>) {
+        self.event_listeners.send(event);
     }
 
     async fn handle_command(&mut self, command: Message<Command>) {
@@ -141,7 +122,7 @@ impl MusicBox {
             Command::Shutdown => {
                 info!("Music box clean shutdown.");
                 self.player.stop().log().drop();
-                self.dispatch_event(Event::Shutdown.into()).await;
+                self.dispatch_event(Event::Shutdown.into());
             }
             Command::StartPlaylist(name, _) => {
                 if self.state.is_playing_playlist(&name) {
@@ -150,7 +131,7 @@ impl MusicBox {
 
                 if let Some(playlist) = self.state.stored_playlist(&name) {
                     self.state.set_playlist(playlist.tracks());
-                    self.dispatch_event(Event::PlaylistUpdated.into()).await;
+                    self.dispatch_event(Event::PlaylistUpdated.into());
                     self.play(0).await;
                 } else {
                     error!(
@@ -185,20 +166,25 @@ impl MusicBox {
             _ => {}
         }
 
-        self.dispatch_event(event).await;
+        self.dispatch_event(event);
     }
 
-    pub fn get_event_stream(&mut self) -> impl Stream<Item = Message<Event>> {
-        let (sender, receiver) = channel(20);
-        self.event_listeners.push(sender);
-        receiver
+    pub fn get_event_stream(&mut self) -> MessageReceiver<Event> {
+        self.event_listeners.receiver()
     }
 
     async fn run(mut self) -> VoidResult {
         info!("Music box startup. Running as process {}.", id());
 
         if let Some(listener) = self.server.take() {
-            serve(listener, self.state.as_immutable());
+            serve(
+                listener,
+                ClientInfo {
+                    app_state: self.state.as_immutable(),
+                    event_receiver: self.event_listeners.receiver(),
+                    command_sender: self.commands.sender(),
+                },
+            );
         }
 
         loop {
@@ -227,7 +213,7 @@ impl MusicBox {
         let app_state =
             MutableAppState::new(StoredPlaylist::init(data_dir, hw_config.playlists).await?);
 
-        let (player, playback_events) = Player::new(0.5)?;
+        let events = MessageReceiver::new();
 
         let mut music_box = MusicBox {
             server: Some(
@@ -235,14 +221,12 @@ impl MusicBox {
                     .await
                     .prefix("Unable to bind to server socket")?,
             ),
-            player,
-            events: Default::default(),
+            player: Player::new(events.sender(), 0.5)?,
+            events,
             commands: Default::default(),
-            event_listeners: Default::default(),
+            event_listeners: MessageSender::new(),
             state: app_state,
         };
-
-        music_box.add_event_stream(playback_events);
 
         #[cfg(feature = "rpi")]
         Buttons::init(&mut music_box, &hw_config.buttons)?;
