@@ -4,6 +4,8 @@ use std::task::{Context, Poll};
 
 use futures::stream::Stream;
 use log::info;
+use serde::Deserialize;
+use serde_json::Value;
 use tokio::net::{TcpListener, TcpStream};
 use warp::reject::{not_found, Rejection};
 use warp::reply::{json, with_header};
@@ -12,6 +14,22 @@ use warp::{path::FullPath, Filter, Reply};
 use crate::appstate::AppState;
 use crate::assets::Webapp;
 use crate::events::{Command, Event, MessageReceiver, MessageSender};
+
+#[derive(Deserialize)]
+#[serde(tag = "type")]
+enum Request {}
+
+#[derive(Deserialize)]
+#[serde(tag = "type")]
+enum MessageFromClient {
+    Command { command: Command },
+    Request { id: u32, request: Request },
+}
+
+enum MessageToClient {
+    Event { event: Event },
+    Response { id: u32, response: Value },
+}
 
 #[derive(Clone)]
 pub struct ClientInfo {

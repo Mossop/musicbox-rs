@@ -68,7 +68,7 @@ export function watchCss(): void {
 }
 
 export function buildStatic(): NodeJS.ReadWriteStream {
-  return src([source("index.html")])
+  return src([source("index.html"), source("static", "**", "*")])
     .pipe(dest(target()));
 }
 

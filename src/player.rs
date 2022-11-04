@@ -253,7 +253,12 @@ impl PlaybackListener {
                     .pipeline
                     .query_position::<ClockTime>()
                     .and_then(|c| c.nseconds())
-                    .map(|n| Event::PlaybackPosition(Duration::from_nanos(n)).into()),
+                    .map(|n| {
+                        Event::PlaybackPosition {
+                            duration: Duration::from_nanos(n),
+                        }
+                        .into()
+                    }),
             };
 
             if let Some(m) = to_send {

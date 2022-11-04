@@ -9,26 +9,28 @@ use futures::stream::{FusedStream, Stream};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(tag = "type")]
 pub enum Command {
     PreviousTrack,
     NextTrack,
     PlayPause,
     VolumeUp,
     VolumeDown,
-    StartPlaylist(String, bool),
+    StartPlaylist { name: String, force: bool },
     Shutdown,
     Reload,
     Status,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "type")]
 pub enum Event {
     PlaylistUpdated,
     PlaybackStarted,
     PlaybackPaused,
     PlaybackUnpaused,
     PlaybackEnded,
-    PlaybackPosition(Duration),
+    PlaybackPosition { duration: Duration },
     Shutdown,
 }
 

@@ -124,7 +124,7 @@ impl MusicBox {
                 self.player.stop().log().drop();
                 self.dispatch_event(Event::Shutdown.into());
             }
-            Command::StartPlaylist(name, _) => {
+            Command::StartPlaylist { name, force: _ } => {
                 if self.state.is_playing_playlist(&name) {
                     return;
                 }
@@ -147,7 +147,7 @@ impl MusicBox {
 
     async fn handle_event(&mut self, event: Message<Event>) {
         match &event.payload {
-            Event::PlaybackPosition(_) => {}
+            Event::PlaybackPosition { duration: _ } => {}
             payload => info!("Saw event {:?}", payload),
         };
 
@@ -246,22 +246,28 @@ impl MusicBox {
         .and_then(|s| s.into_async())
         {
             Ok(signals) => {
-                music_box.add_command_stream(signals.compat().filter_map(|r| match r {
-                    Ok(signal_hook::SIGHUP) => ready(Some(Command::Reload.into())),
-                    Ok(signal_hook::SIGTERM) => ready(Some(Command::Shutdown.into())),
-                    Ok(signal_hook::SIGINT) => ready(Some(Command::Shutdown.into())),
-                    Ok(signal_hook::SIGQUIT) => ready(Some(Command::Shutdown.into())),
-                    Ok(signal_hook::SIGUSR1) => ready(Some(Command::Status.into())),
-                    Ok(signal_hook::SIGUSR2) => ready(Some(
-                        Command::StartPlaylist(String::from("red"), true).into(),
-                    )),
-                    Ok(signal) => {
-                        error!("Received unexpected signal {}.", signal);
-                        ready(None)
-                    }
-                    Err(e) => {
-                        error!("Received unknown error: {}", e);
-                        ready(None)
+                music_box.add_command_stream(signals.compat().filter_map(|r| {
+                    match r {
+                        Ok(signal_hook::SIGHUP) => ready(Some(Command::Reload.into())),
+                        Ok(signal_hook::SIGTERM) => ready(Some(Command::Shutdown.into())),
+                        Ok(signal_hook::SIGINT) => ready(Some(Command::Shutdown.into())),
+                        Ok(signal_hook::SIGQUIT) => ready(Some(Command::Shutdown.into())),
+                        Ok(signal_hook::SIGUSR1) => ready(Some(Command::Status.into())),
+                        Ok(signal_hook::SIGUSR2) => ready(Some(
+                            Command::StartPlaylist {
+                                name: String::from("red"),
+                                force: true,
+                            }
+                            .into(),
+                        )),
+                        Ok(signal) => {
+                            error!("Received unexpected signal {}.", signal);
+                            ready(None)
+                        }
+                        Err(e) => {
+                            error!("Received unknown error: {}", e);
+                            ready(None)
+                        }
                     }
                 }));
             }

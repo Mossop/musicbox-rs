@@ -1,0 +1,28 @@
+@import "./reset";
+
+$sidebar: hsla(198%, 21%, 39%, 1);
+$player: hsla(197%, 33%, 81%, 1);
+$background: hsla(196%, 36%, 90%, 1);
+$blue: hsla(216%, 38%, 47%, 1);
+$deep_blue: hsla(201%, 72%, 31%, 1);
+
+#app {
+  display: flex;
+  flex-direction: column;
+}
+
+#content {
+  flex: 1;
+  display: flex;
+  flex-direction: row;
+}
+
+#sidebar {
+  width: 150px;
+  background: $sidebar;
+}
+
+#player {
+  height: 200px;
+  background: $player;
+}
