@@ -1,32 +1,36 @@
+use std::convert::Infallible;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
 use std::time::{Duration, Instant};
 
+use futures::sink::Sink;
 use futures::stream::{FusedStream, Stream};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(tag = "type")]
 pub enum Command {
     PreviousTrack,
     NextTrack,
     PlayPause,
     VolumeUp,
     VolumeDown,
-    StartPlaylist(String, bool),
+    StartPlaylist { name: String, force: bool },
     Shutdown,
     Reload,
     Status,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "type")]
 pub enum Event {
     PlaylistUpdated,
     PlaybackStarted,
     PlaybackPaused,
     PlaybackUnpaused,
     PlaybackEnded,
-    PlaybackPosition(Duration),
+    PlaybackPosition { duration: Duration },
     Shutdown,
 }
 
@@ -51,114 +55,167 @@ impl<T> From<T> for Message<T> {
     }
 }
 
-#[derive(Default)]
-struct MessageStreamState<T> {
-    streams: Vec<Pin<Box<dyn Stream<Item = Message<T>>>>>,
-    waker: Option<Waker>,
-}
-
-// An asynchronous event loop.
-///
-/// Polls for events from asynchronous event streams.
-pub struct MessageStream<T> {
-    state: Arc<Mutex<MessageStreamState<T>>>,
-}
-
-impl<T> MessageStream<T> {
-    pub fn add_stream<S>(&self, stream: S)
-    where
-        S: Stream<Item = Message<T>> + 'static,
-    {
-        // Push the stream onto the list of pending streams.
-        let mut streams = self.state.lock().unwrap();
-        streams.streams.push(Box::pin(stream));
-        if let Some(waker) = streams.waker.take() {
-            waker.wake();
-        }
-    }
-}
-
-impl<T> Default for MessageStream<T> {
-    fn default() -> MessageStream<T> {
-        MessageStream {
-            state: Arc::new(Mutex::new(MessageStreamState::<T> {
-                streams: Default::default(),
-                waker: None,
-            })),
-        }
-    }
-}
-
-impl<T> Stream for MessageStream<T> {
-    type Item = Message<T>;
-
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Message<T>>> {
-        let mut state = self.state.lock().unwrap();
-
-        // Loop over all the streams moving those checked to the back so on the
-        // next check we pick up where we left off. Give up after checking them
-        // all and wait for wake-up.
-        for _ in 0..state.streams.len() {
-            match state.streams.pop() {
-                Some(mut stream) => match stream.as_mut().poll_next(cx) {
-                    Poll::Ready(Some(message)) => {
-                        state.streams.insert(0, stream);
-                        return Poll::Ready(Some(message));
-                    }
-                    Poll::Ready(None) => {
-                        // Drop this stream.
-                    }
-                    Poll::Pending => {
-                        state.streams.insert(0, stream);
-                    }
-                },
-                None => return Poll::Ready(None),
-            }
-        }
-
-        if state.streams.is_empty() {
-            Poll::Ready(None)
-        } else {
-            state.waker = Some(cx.waker().clone());
-            Poll::Pending
-        }
-    }
-}
-
-impl<T> FusedStream for MessageStream<T> {
-    fn is_terminated(&self) -> bool {
-        self.state.lock().unwrap().streams.is_empty()
-    }
-}
-
-#[derive(Default)]
-pub struct SyncMessageChannel<T> {
+struct Channel<T> {
     messages: Vec<Message<T>>,
     waker: Option<Waker>,
 }
 
-impl<T> SyncMessageChannel<T> {
-    pub fn init() -> (MessageSender<T>, impl Stream<Item = Message<T>>) {
-        let channel = SyncMessageChannel {
+impl<T> Default for Channel<T> {
+    fn default() -> Self {
+        Channel {
             messages: Vec::new(),
             waker: None,
-        };
-
-        let channel = Arc::new(Mutex::new(channel));
-        (
-            MessageSender {
-                channel: channel.clone(),
-            },
-            MessageReceiver { channel },
-        )
+        }
     }
 }
 
-struct MessageReceiver<T> {
-    channel: Arc<Mutex<SyncMessageChannel<T>>>,
+#[derive(Clone)]
+pub struct MessageSender<T>
+where
+    T: Clone,
+{
+    channels: Arc<Mutex<Vec<Arc<Mutex<Channel<T>>>>>>,
 }
 
-impl<T> Stream for MessageReceiver<T> {
+impl<T> MessageSender<T>
+where
+    T: Clone,
+{
+    pub fn new() -> MessageSender<T> {
+        MessageSender {
+            channels: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    pub fn send(&self, message: Message<T>) {
+        let channels = self.channels.lock().unwrap();
+        for mut channel in channels.iter().map(|c| c.lock().unwrap()) {
+            channel.messages.push(message.clone());
+            if let Some(waker) = channel.waker.take() {
+                waker.wake();
+            }
+        }
+    }
+
+    pub fn receiver(&self) -> MessageReceiver<T> {
+        let mut channels = self.channels.lock().unwrap();
+        let channel = Arc::new(Mutex::new(Default::default()));
+        channels.push(channel.clone());
+
+        MessageReceiver {
+            channels: self.channels.clone(),
+            channel,
+        }
+    }
+}
+
+impl<T> Default for MessageSender<T>
+where
+    T: Clone,
+{
+    fn default() -> Self {
+        MessageSender::new()
+    }
+}
+
+impl<T> Sink<Message<T>> for MessageSender<T>
+where
+    T: Clone,
+{
+    type Error = Infallible;
+
+    fn poll_ready(self: Pin<&mut Self>, _: &mut Context) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn start_send(self: Pin<&mut Self>, item: Message<T>) -> Result<(), Self::Error> {
+        self.send(item);
+        Ok(())
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, _: &mut Context) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_close(self: Pin<&mut Self>, _: &mut Context) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+}
+
+pub struct MessageReceiver<T>
+where
+    T: Clone,
+{
+    channels: Arc<Mutex<Vec<Arc<Mutex<Channel<T>>>>>>,
+    channel: Arc<Mutex<Channel<T>>>,
+}
+
+impl<T> MessageReceiver<T>
+where
+    T: Clone,
+{
+    pub fn new() -> MessageReceiver<T> {
+        let channel = Arc::new(Mutex::new(Default::default()));
+        let mut vec = Vec::new();
+        vec.push(channel.clone());
+
+        MessageReceiver {
+            channels: Arc::new(Mutex::new(vec)),
+            channel,
+        }
+    }
+
+    pub fn sender(&self) -> MessageSender<T> {
+        MessageSender {
+            channels: self.channels.clone(),
+        }
+    }
+}
+
+impl<T> Default for MessageReceiver<T>
+where
+    T: Clone,
+{
+    fn default() -> Self {
+        MessageReceiver::new()
+    }
+}
+
+impl<T> Clone for MessageReceiver<T>
+where
+    T: Clone,
+{
+    fn clone(&self) -> MessageReceiver<T> {
+        let mut channels = self.channels.lock().unwrap();
+        let channel = Arc::new(Mutex::new(Default::default()));
+        channels.push(channel.clone());
+
+        MessageReceiver {
+            channels: self.channels.clone(),
+            channel,
+        }
+    }
+}
+
+impl<T> Drop for MessageReceiver<T>
+where
+    T: Clone,
+{
+    fn drop(&mut self) {
+        let mut channels = self.channels.lock().unwrap();
+        for (i, ref channel) in channels.iter().enumerate() {
+            if Arc::ptr_eq(channel, &self.channel) {
+                channels.remove(i);
+                return;
+            }
+        }
+    }
+}
+
+impl<T> Stream for MessageReceiver<T>
+where
+    T: Clone,
+{
     type Item = Message<T>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Message<T>>> {
@@ -176,19 +233,11 @@ impl<T> Stream for MessageReceiver<T> {
     }
 }
 
-#[derive(Clone)]
-pub struct MessageSender<T> {
-    channel: Arc<Mutex<SyncMessageChannel<T>>>,
-}
-
-impl<T> MessageSender<T> {
-    pub fn send(&self, message: Message<T>) {
-        if let Ok(ref mut channel) = self.channel.lock() {
-            channel.messages.push(message);
-
-            if let Some(waker) = channel.waker.take() {
-                waker.wake();
-            }
-        }
+impl<T> FusedStream for MessageReceiver<T>
+where
+    T: Clone,
+{
+    fn is_terminated(&self) -> bool {
+        false
     }
 }

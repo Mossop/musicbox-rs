@@ -2,7 +2,6 @@ use std::path::Path;
 use std::thread;
 use std::time::Duration;
 
-use futures::Stream;
 use glib::error::Error;
 use glib::object::{Cast, ObjectExt};
 use glib::value::Value;
@@ -16,7 +15,7 @@ use gstreamer_audio::{StreamVolume, StreamVolumeExt, StreamVolumeFormat};
 use log::{error, info, trace, warn};
 
 use crate::error::{ErrorExt, MusicResult, VoidResult};
-use crate::events::{Event, Message, MessageSender, SyncMessageChannel};
+use crate::events::{Event, Message, MessageSender};
 
 const BUS_POLL_TIMEOUT: u64 = 500;
 
@@ -40,18 +39,14 @@ pub struct Player {
 }
 
 impl Player {
-    pub fn new(vol: f64) -> MusicResult<(Player, impl Stream<Item = Message<Event>>)> {
+    pub fn new(sender: MessageSender<Event>, vol: f64) -> MusicResult<Player> {
         init().prefix("Unable to initialize gstreamer")?;
 
-        let (sender, receiver) = SyncMessageChannel::<Event>::init();
-
-        let player = Player {
+        Ok(Player {
             playback: None,
             event_sender: sender,
             volume: vol,
-        };
-
-        Ok((player, receiver))
+        })
     }
 
     pub fn start(&mut self, path: &Path) -> VoidResult {
@@ -258,7 +253,12 @@ impl PlaybackListener {
                     .pipeline
                     .query_position::<ClockTime>()
                     .and_then(|c| c.nseconds())
-                    .map(|n| Event::PlaybackPosition(Duration::from_nanos(n)).into()),
+                    .map(|n| {
+                        Event::PlaybackPosition {
+                            duration: Duration::from_nanos(n),
+                        }
+                        .into()
+                    }),
             };
 
             if let Some(m) = to_send {

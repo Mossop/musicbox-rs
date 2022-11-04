@@ -1,4 +1,5 @@
-import { actions } from "./helpers";
+import { actionCreators } from "deeds/immer";
 
-export default actions({
-});
+import reducer from "./reducer";
+
+export default actionCreators(reducer);

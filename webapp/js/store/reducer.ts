@@ -1,6 +1,10 @@
-import { WebAppState } from "../types/store";
-import actions from "./actions";
-import { reducer } from "./helpers";
+import { Draft } from "immer";
 
-export default reducer<typeof actions, WebAppState>({
-});
+import { AppState } from "../types/musicbox";
+import { WebAppState } from "../types/store";
+
+export default {
+  setState(state: Draft<WebAppState>, appState: AppState): void {
+    state.appState = appState;
+  }
+};
